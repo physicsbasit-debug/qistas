@@ -10,20 +10,50 @@ const DEFAULT_SETTINGS = Object.freeze({
   leadMaxLoad: 12,
 });
 
+const MAX_RELOCATION_DEPTH = 4;
+const MAX_RELOCATION_SUBSETS = 120;
+const MAX_RELOCATION_ITEMS = 6;
+const MODEL_STYLES = ['balanced', 'specialized', 'compact'];
+
 const scenarioMeta = {
   balanced: {
-    label: 'المقترح المتوازن',
-    description: 'يوزّع الحصص بأقرب توازن ممكن داخل الخيارات التي حددتها.',
+    description: 'يوازن الأنصبة مع احترام نطاق كل معلم وسقف نصابه.',
   },
   specialized: {
-    label: 'بديل يقدّم التخصص',
-    description: 'يعطي أولوية أكبر لمادة التخصص قبل الإسنادات الإضافية.',
+    description: 'يعطي أولوية أكبر لمادة التخصص ثم يوازن السعة المتبقية.',
   },
   compact: {
-    label: 'بديل أقل تشعبًا',
-    description: 'يحاول تقليل تنوع الصفوف والمواد لدى كل معلم.',
+    description: 'يقلل تشعب الصفوف والمواد قدر الإمكان مع بقاء الخطة صحيحة.',
   },
 };
+
+function hashString(value) {
+  let hash = 2166136261;
+  for (const character of String(value)) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function seededUnit(seed, key) {
+  let value = hashString(`${seed}:${key}`) || 1;
+  value += 0x6d2b79f5;
+  value = Math.imul(value ^ (value >>> 15), value | 1);
+  value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+  return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+}
+
+function createVariant(seed = 0, attempt = 0) {
+  const mode = attempt % 5;
+  return {
+    seed,
+    taskOrderMode: mode,
+    taskJitter: attempt === 0 ? 0 : 0.9,
+    candidateJitter: attempt === 0 ? 0 : 220 + (attempt % 7) * 55,
+    mutationSteps: attempt < 3 ? 0 : 3 + (attempt % 9),
+  };
+}
 
 export function normalizeSettings(settings = {}) {
   return {
@@ -69,7 +99,7 @@ function variance(values) {
   return values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
 }
 
-function scoreCandidate(kind, teacher, task, assignments, currentLoad, maxLoad) {
+function scoreCandidate(kind, teacher, task, assignments, currentLoad, maxLoad, variant) {
   const projected = currentLoad + task.periods;
   const status = assignmentStatus(teacher, task);
   const own = assignments.filter((item) => item.teacherId === teacher.id);
@@ -77,23 +107,41 @@ function scoreCandidate(kind, teacher, task, assignments, currentLoad, maxLoad) 
   const hasGrade = own.some((item) => item.grade === task.grade);
   const utilization = projected / Math.max(1, maxLoad);
   const flexiblePenalty = status === ASSIGNMENT_STATUS.ALLOWED ? 1 : 0;
+  const jitter = seededUnit(variant.seed, `candidate:${task.id}:${teacher.id}`)
+    * variant.candidateJitter;
 
   if (kind === 'specialized') {
     return flexiblePenalty * 4_000
       + utilization * 1_000
-      + (hasGrade ? 0 : 20);
+      + (hasGrade ? 0 : 20)
+      + jitter;
   }
 
   if (kind === 'compact') {
     return flexiblePenalty * 700
       + (hasSubject || own.length === 0 ? 0 : 850)
       + (hasGrade || own.length === 0 ? 0 : 380)
-      + utilization * 260;
+      + utilization * 260
+      + jitter;
   }
 
   return flexiblePenalty * 500
     + utilization * 1_000
-    + (hasGrade || own.length === 0 ? 0 : 15);
+    + (hasGrade || own.length === 0 ? 0 : 15)
+    + jitter;
+}
+
+function assignmentFromTask(task, teacher, preference = assignmentStatus(teacher, task)) {
+  return {
+    taskId: task.id,
+    requirementId: task.requirementId,
+    teacherId: teacher.id,
+    grade: task.grade,
+    subject: task.subject,
+    section: task.section,
+    periods: task.periods,
+    preference,
+  };
 }
 
 function buildSummaries(teachers, assignments, settings) {
@@ -117,7 +165,7 @@ function buildSummaries(teachers, assignments, settings) {
 function buildWarnings(summaries, unassigned) {
   const warnings = [];
   if (unassigned.length) {
-    warnings.push(`تعذر إسناد ${unassigned.length} شعبة بسبب خيارات التدريس أو السعة المتاحة.`);
+    warnings.push(`تعذر إسناد ${unassigned.length} شعبة بعد فحص بدائل النقل وإعادة الموازنة.`);
   }
   for (const summary of summaries) {
     if (summary.load > summary.maxLoad) {
@@ -127,35 +175,54 @@ function buildWarnings(summaries, unassigned) {
   return [...new Set(warnings)];
 }
 
-export function generateScenario(kind, teachers, requirements, settings = DEFAULT_SETTINGS) {
-  const normalizedSettings = normalizeSettings(settings);
-  const activeTeachers = teachers.filter((teacher) => teacher.active);
+function taskOrderValue(task, activeTeachers, variant) {
+  const eligible = activeTeachers.filter((teacher) => isEligible(teacher, task)).length;
+  const flexible = activeTeachers.filter(
+    (teacher) => assignmentStatus(teacher, task) === ASSIGNMENT_STATUS.ALLOWED,
+  ).length;
+  const jitter = seededUnit(variant.seed, `task:${task.id}`) * variant.taskJitter;
+
+  if (variant.taskOrderMode === 1) {
+    return [eligible, flexible, task.periods, jitter];
+  }
+  if (variant.taskOrderMode === 2) {
+    return [eligible, flexible, seededUnit(variant.seed, `subject:${task.subject}`), -task.periods + jitter];
+  }
+  if (variant.taskOrderMode === 3) {
+    return [eligible, flexible, seededUnit(variant.seed, `grade:${task.grade}`), -task.periods + jitter];
+  }
+  if (variant.taskOrderMode === 4) {
+    return [eligible, flexible, jitter, -task.periods];
+  }
+  return [eligible, flexible, -task.periods, jitter];
+}
+
+function compareTuple(a, b) {
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference) return difference;
+  }
+  return 0;
+}
+
+function sortTasksForGreedy(tasks, activeTeachers, variant) {
+  return [...tasks].sort((a, b) => compareTuple(
+    taskOrderValue(a, activeTeachers, variant),
+    taskOrderValue(b, activeTeachers, variant),
+  ) || a.subject.localeCompare(b.subject, 'ar') || a.section - b.section);
+}
+
+function greedyAssign(kind, activeTeachers, tasks, settings, variant) {
   const assignments = [];
   const unassigned = [];
   const loads = new Map(activeTeachers.map((teacher) => [teacher.id, 0]));
-  const tasks = expandRequirements(requirements)
-    .filter((task) => task.periods > 0 && task.subject && task.grade)
-    .sort((a, b) => {
-      const eligibleA = activeTeachers.filter((teacher) => isEligible(teacher, a)).length;
-      const eligibleB = activeTeachers.filter((teacher) => isEligible(teacher, b)).length;
-      const flexibleA = activeTeachers.filter(
-        (teacher) => assignmentStatus(teacher, a) === ASSIGNMENT_STATUS.ALLOWED,
-      ).length;
-      const flexibleB = activeTeachers.filter(
-        (teacher) => assignmentStatus(teacher, b) === ASSIGNMENT_STATUS.ALLOWED,
-      ).length;
-      return eligibleA - eligibleB
-        || flexibleA - flexibleB
-        || b.periods - a.periods
-        || a.subject.localeCompare(b.subject, 'ar');
-    });
 
-  for (const task of tasks) {
+  for (const task of sortTasksForGreedy(tasks, activeTeachers, variant)) {
     const candidates = activeTeachers
       .filter((teacher) => isEligible(teacher, task))
       .map((teacher) => {
         const currentLoad = loads.get(teacher.id) ?? 0;
-        const maxLoad = teacherMaxLoad(teacher, normalizedSettings);
+        const maxLoad = teacherMaxLoad(teacher, settings);
         return {
           teacher,
           currentLoad,
@@ -173,6 +240,7 @@ export function generateScenario(kind, teachers, requirements, settings = DEFAUL
           assignments,
           candidate.currentLoad,
           candidate.maxLoad,
+          variant,
         ),
       }))
       .sort((a, b) => a.score - b.score || a.teacher.name.localeCompare(b.teacher.name, 'ar'));
@@ -183,49 +251,615 @@ export function generateScenario(kind, teachers, requirements, settings = DEFAUL
       continue;
     }
 
-    assignments.push({
-      taskId: task.id,
-      requirementId: task.requirementId,
-      teacherId: best.teacher.id,
-      grade: task.grade,
-      subject: task.subject,
-      section: task.section,
-      periods: task.periods,
-      preference: best.status,
-    });
+    assignments.push(assignmentFromTask(task, best.teacher, best.status));
     loads.set(best.teacher.id, best.currentLoad + task.periods);
   }
 
-  const summaries = buildSummaries(activeTeachers, assignments, normalizedSettings);
+  return { assignments, unassigned };
+}
+
+function createRepairState(activeTeachers, tasks, assignments, settings, variant) {
+  const teacherById = new Map(activeTeachers.map((teacher) => [teacher.id, teacher]));
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const placements = new Map(assignments.map((assignment) => [assignment.taskId, assignment.teacherId]));
+  const loads = new Map(activeTeachers.map((teacher) => [teacher.id, 0]));
+
+  for (const [taskId, teacherId] of placements) {
+    const task = taskById.get(taskId);
+    if (task) loads.set(teacherId, (loads.get(teacherId) ?? 0) + task.periods);
+  }
+
+  return {
+    activeTeachers,
+    teacherById,
+    taskById,
+    placements,
+    loads,
+    settings,
+    variant,
+  };
+}
+
+function snapshotRepairState(state) {
+  return {
+    placements: new Map(state.placements),
+    loads: new Map(state.loads),
+  };
+}
+
+function restoreRepairState(state, snapshot) {
+  state.placements = snapshot.placements;
+  state.loads = snapshot.loads;
+}
+
+function assignedTasksForTeacher(state, teacherId) {
+  const tasks = [];
+  for (const [taskId, assignedTeacherId] of state.placements) {
+    if (assignedTeacherId === teacherId) {
+      const task = state.taskById.get(taskId);
+      if (task) tasks.push(task);
+    }
+  }
+  return tasks;
+}
+
+function repairAssignmentsView(state) {
+  const assignments = [];
+  for (const [taskId, teacherId] of state.placements) {
+    const task = state.taskById.get(taskId);
+    const teacher = state.teacherById.get(teacherId);
+    if (task && teacher) assignments.push(assignmentFromTask(task, teacher));
+  }
+  return assignments;
+}
+
+function assignTask(state, task, teacherId) {
+  const previousTeacherId = state.placements.get(task.id);
+  if (previousTeacherId) {
+    state.loads.set(
+      previousTeacherId,
+      Math.max(0, (state.loads.get(previousTeacherId) ?? 0) - task.periods),
+    );
+  }
+  state.placements.set(task.id, teacherId);
+  state.loads.set(teacherId, (state.loads.get(teacherId) ?? 0) + task.periods);
+}
+
+function unassignTask(state, task) {
+  const teacherId = state.placements.get(task.id);
+  if (!teacherId) return;
+  state.placements.delete(task.id);
+  state.loads.set(teacherId, Math.max(0, (state.loads.get(teacherId) ?? 0) - task.periods));
+}
+
+function candidateInfos(kind, task, state, excludedTeacherIds = new Set()) {
+  const assignments = repairAssignmentsView(state);
+  return state.activeTeachers
+    .filter((teacher) => !excludedTeacherIds.has(teacher.id) && isEligible(teacher, task))
+    .map((teacher) => {
+      const currentLoad = state.loads.get(teacher.id) ?? 0;
+      const maxLoad = teacherMaxLoad(teacher, state.settings);
+      return {
+        teacher,
+        currentLoad,
+        maxLoad,
+        shortage: Math.max(0, currentLoad + task.periods - maxLoad),
+        score: scoreCandidate(
+          kind,
+          teacher,
+          task,
+          assignments,
+          currentLoad,
+          maxLoad,
+          state.variant,
+        ),
+      };
+    })
+    .sort((a, b) => a.shortage - b.shortage
+      || a.score - b.score
+      || a.teacher.name.localeCompare(b.teacher.name, 'ar'));
+}
+
+function alternativeTeacherCount(task, state, excludedTeacherId) {
+  return state.activeTeachers.filter((teacher) => (
+    teacher.id !== excludedTeacherId && isEligible(teacher, task)
+  )).length;
+}
+
+function relocationSubsets(tasks, neededPeriods, state, targetTeacherId) {
+  const movable = tasks
+    .map((task) => ({
+      task,
+      alternatives: alternativeTeacherCount(task, state, targetTeacherId),
+    }))
+    .filter((item) => item.alternatives > 0)
+    .sort((a, b) => b.alternatives - a.alternatives
+      || a.task.periods - b.task.periods
+      || seededUnit(state.variant.seed, `relocate:${a.task.id}`)
+        - seededUnit(state.variant.seed, `relocate:${b.task.id}`));
+
+  const results = [];
+
+  function visit(index, picked, total, flexibility) {
+    if (results.length >= MAX_RELOCATION_SUBSETS) return;
+    if (total >= neededPeriods) {
+      results.push({
+        tasks: picked.map((item) => item.task),
+        total,
+        flexibility,
+      });
+      return;
+    }
+    if (index >= movable.length || picked.length >= MAX_RELOCATION_ITEMS) return;
+
+    for (let next = index; next < movable.length; next += 1) {
+      const item = movable[next];
+      picked.push(item);
+      visit(
+        next + 1,
+        picked,
+        total + item.task.periods,
+        flexibility + item.alternatives,
+      );
+      picked.pop();
+      if (results.length >= MAX_RELOCATION_SUBSETS) return;
+    }
+  }
+
+  visit(0, [], 0, 0);
+  return results.sort((a, b) => (a.total - neededPeriods) - (b.total - neededPeriods)
+    || a.tasks.length - b.tasks.length
+    || b.flexibility - a.flexibility);
+}
+
+function tryPlaceTask(
+  kind,
+  task,
+  state,
+  depth,
+  excludedTeacherIds = new Set(),
+  chainTaskIds = new Set(),
+) {
+  const candidates = candidateInfos(kind, task, state, excludedTeacherIds);
+  const direct = candidates.find((candidate) => candidate.shortage === 0);
+  if (direct) {
+    assignTask(state, task, direct.teacher.id);
+    return true;
+  }
+
+  if (depth <= 0) return false;
+
+  for (const candidate of candidates) {
+    if (candidate.shortage <= 0) continue;
+
+    const assignedTasks = assignedTasksForTeacher(state, candidate.teacher.id)
+      .filter((assignedTask) => !chainTaskIds.has(assignedTask.id));
+    const subsets = relocationSubsets(
+      assignedTasks,
+      candidate.shortage,
+      state,
+      candidate.teacher.id,
+    );
+
+    for (const subset of subsets) {
+      const snapshot = snapshotRepairState(state);
+      for (const displacedTask of subset.tasks) unassignTask(state, displacedTask);
+
+      const available = candidate.maxLoad - (state.loads.get(candidate.teacher.id) ?? 0);
+      if (available < task.periods) {
+        restoreRepairState(state, snapshot);
+        continue;
+      }
+
+      assignTask(state, task, candidate.teacher.id);
+      let relocated = true;
+      const displacedSorted = [...subset.tasks].sort((a, b) => (
+        alternativeTeacherCount(a, state, candidate.teacher.id)
+        - alternativeTeacherCount(b, state, candidate.teacher.id)
+      ) || b.periods - a.periods);
+
+      for (const displacedTask of displacedSorted) {
+        const nextExcluded = new Set(excludedTeacherIds);
+        nextExcluded.add(candidate.teacher.id);
+        const nextChain = new Set(chainTaskIds);
+        nextChain.add(task.id);
+        nextChain.add(displacedTask.id);
+
+        if (!tryPlaceTask(
+          kind,
+          displacedTask,
+          state,
+          depth - 1,
+          nextExcluded,
+          nextChain,
+        )) {
+          relocated = false;
+          break;
+        }
+      }
+
+      if (relocated) return true;
+      restoreRepairState(state, snapshot);
+    }
+  }
+
+  return false;
+}
+
+function repairUnassigned(
+  kind,
+  activeTeachers,
+  tasks,
+  initialAssignments,
+  initialUnassigned,
+  settings,
+  variant,
+) {
+  const state = createRepairState(activeTeachers, tasks, initialAssignments, settings, variant);
+  const initialPlacements = new Map(
+    initialAssignments.map((assignment) => [assignment.taskId, assignment.teacherId]),
+  );
+  const remaining = [];
+  const pending = [...initialUnassigned].sort((a, b) => b.periods - a.periods);
+
+  for (const task of pending) {
+    const snapshot = snapshotRepairState(state);
+    if (!tryPlaceTask(kind, task, state, MAX_RELOCATION_DEPTH)) {
+      restoreRepairState(state, snapshot);
+      remaining.push(task);
+    }
+  }
+
+  const assignments = repairAssignmentsView(state).sort((a, b) => (
+    a.teacherId.localeCompare(b.teacherId)
+    || a.grade.localeCompare(b.grade, 'ar')
+    || a.subject.localeCompare(b.subject, 'ar')
+    || a.section - b.section
+  ));
+  const relocationCount = [...initialPlacements].filter(([taskId, teacherId]) => (
+    state.placements.get(taskId) !== teacherId
+  )).length;
+  const repairedCount = initialUnassigned.filter((task) => state.placements.has(task.id)).length;
+
+  return {
+    assignments,
+    unassigned: remaining,
+    relocationCount,
+    repairedCount,
+  };
+}
+
+function mutateAssignments(activeTeachers, tasks, assignments, settings, variant) {
+  if (!assignments.length || variant.mutationSteps <= 0) return assignments;
+
+  const teacherById = new Map(activeTeachers.map((teacher) => [teacher.id, teacher]));
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const placements = new Map(assignments.map((item) => [item.taskId, item.teacherId]));
+  const loads = new Map(activeTeachers.map((teacher) => [teacher.id, 0]));
+  for (const assignment of assignments) {
+    loads.set(assignment.teacherId, (loads.get(assignment.teacherId) ?? 0) + assignment.periods);
+  }
+
+  const assignedTaskIds = [...placements.keys()];
+  for (let step = 0; step < variant.mutationSteps; step += 1) {
+    const firstIndex = Math.floor(
+      seededUnit(variant.seed, `mutation:first:${step}`) * assignedTaskIds.length,
+    );
+    const taskA = taskById.get(assignedTaskIds[firstIndex]);
+    if (!taskA) continue;
+    const teacherAId = placements.get(taskA.id);
+    const teacherA = teacherById.get(teacherAId);
+    if (!teacherA) continue;
+
+    const trySwap = seededUnit(variant.seed, `mutation:type:${step}`) < 0.72;
+    if (trySwap) {
+      const compatible = assignedTaskIds
+        .map((taskId) => taskById.get(taskId))
+        .filter((taskB) => {
+          if (!taskB || taskB.id === taskA.id) return false;
+          const teacherBId = placements.get(taskB.id);
+          if (!teacherBId || teacherBId === teacherAId) return false;
+          const teacherB = teacherById.get(teacherBId);
+          if (!teacherB) return false;
+          const loadA = loads.get(teacherAId) ?? 0;
+          const loadB = loads.get(teacherBId) ?? 0;
+          return isEligible(teacherA, taskB)
+            && isEligible(teacherB, taskA)
+            && loadA - taskA.periods + taskB.periods <= teacherMaxLoad(teacherA, settings)
+            && loadB - taskB.periods + taskA.periods <= teacherMaxLoad(teacherB, settings);
+        });
+
+      if (compatible.length) {
+        const taskB = compatible[Math.floor(
+          seededUnit(variant.seed, `mutation:second:${step}`) * compatible.length,
+        )];
+        const teacherBId = placements.get(taskB.id);
+        placements.set(taskA.id, teacherBId);
+        placements.set(taskB.id, teacherAId);
+        loads.set(
+          teacherAId,
+          (loads.get(teacherAId) ?? 0) - taskA.periods + taskB.periods,
+        );
+        loads.set(
+          teacherBId,
+          (loads.get(teacherBId) ?? 0) - taskB.periods + taskA.periods,
+        );
+        continue;
+      }
+    }
+
+    const destinationCandidates = activeTeachers.filter((teacher) => {
+      if (teacher.id === teacherAId || !isEligible(teacher, taskA)) return false;
+      return (loads.get(teacher.id) ?? 0) + taskA.periods <= teacherMaxLoad(teacher, settings);
+    });
+    if (!destinationCandidates.length) continue;
+    const destination = destinationCandidates[Math.floor(
+      seededUnit(variant.seed, `mutation:destination:${step}`) * destinationCandidates.length,
+    )];
+    placements.set(taskA.id, destination.id);
+    loads.set(teacherAId, Math.max(0, (loads.get(teacherAId) ?? 0) - taskA.periods));
+    loads.set(destination.id, (loads.get(destination.id) ?? 0) + taskA.periods);
+  }
+
+  return [...placements].map(([taskId, teacherId]) => {
+    const task = taskById.get(taskId);
+    const teacher = teacherById.get(teacherId);
+    return assignmentFromTask(task, teacher);
+  }).sort((a, b) => a.taskId.localeCompare(b.taskId));
+}
+
+export function scenarioSignature(scenarioOrAssignments, unassigned = []) {
+  const assignments = Array.isArray(scenarioOrAssignments)
+    ? scenarioOrAssignments
+    : scenarioOrAssignments.assignments;
+  const missing = Array.isArray(scenarioOrAssignments)
+    ? unassigned
+    : scenarioOrAssignments.unassigned;
+  return [
+    ...assignments.map((item) => `${item.taskId}:${item.teacherId}`).sort(),
+    ...missing.map((item) => `${item.id}:unassigned`).sort(),
+  ].join('|');
+}
+
+function modelId(signature) {
+  return `model-${hashString(signature).toString(36)}`;
+}
+
+function assignmentMap(scenario) {
+  return new Map(scenario.assignments.map((assignment) => [assignment.taskId, assignment.teacherId]));
+}
+
+export function modelDistance(first, second) {
+  const firstMap = assignmentMap(first);
+  const secondMap = assignmentMap(second);
+  const taskIds = new Set([...firstMap.keys(), ...secondMap.keys()]);
+  if (!taskIds.size) return 0;
+  let different = 0;
+  for (const taskId of taskIds) {
+    if (firstMap.get(taskId) !== secondMap.get(taskId)) different += 1;
+  }
+  return different / taskIds.size;
+}
+
+function scenarioMetrics(activeTeachers, assignments, unassigned, settings) {
+  const summaries = buildSummaries(activeTeachers, assignments, settings);
+  const loads = summaries.map((item) => item.load);
   const utilizationVariance = variance(summaries.map((item) => (
     item.load / Math.max(1, item.maxLoad)
   )));
-  const rawLoadVariance = variance(summaries.map((item) => item.load));
+  const rawLoadVariance = variance(loads);
   const overloadCount = summaries.filter((summary) => summary.load > summary.maxLoad).length;
   const flexiblePeriodsCount = summaries.reduce((sum, item) => sum + item.flexiblePeriods, 0);
-  const score = utilizationVariance * 1_000
-    + overloadCount * 20_000
+  const unassignedPeriods = unassigned.reduce((sum, item) => sum + item.periods, 0);
+  const compactness = summaries.reduce(
+    (sum, item) => sum + item.subjectCount + item.gradeCount,
+    0,
+  );
+  const highestLoad = loads.length ? Math.max(...loads) : 0;
+  const lowestLoad = loads.length ? Math.min(...loads) : 0;
+  const loadSpread = highestLoad - lowestLoad;
+  const rankScore = unassignedPeriods * 100_000
     + unassigned.length * 30_000
-    + (kind === 'specialized' ? flexiblePeriodsCount * 3 : flexiblePeriodsCount);
+    + overloadCount * 20_000
+    + utilizationVariance * 4_000
+    + loadSpread * 120
+    + flexiblePeriodsCount * 1.5
+    + compactness * 2;
 
   return {
-    id: kind,
-    ...scenarioMeta[kind],
-    assignments,
-    unassigned,
     summaries,
     variance: rawLoadVariance,
     utilizationVariance,
     overloadCount,
     flexiblePeriodsCount,
-    score,
-    warnings: buildWarnings(summaries, unassigned),
+    compactness,
+    highestLoad,
+    lowestLoad,
+    loadSpread,
+    unassignedPeriods,
+    rankScore,
+  };
+}
+
+export function generateScenario(
+  kind,
+  teachers,
+  requirements,
+  settings = DEFAULT_SETTINGS,
+  options = {},
+) {
+  const normalizedSettings = normalizeSettings(settings);
+  const activeTeachers = teachers.filter((teacher) => teacher.active);
+  const tasks = expandRequirements(requirements)
+    .filter((task) => task.periods > 0 && task.subject && task.grade);
+  const variant = options.variant ?? createVariant(options.seed ?? 0, options.attempt ?? 0);
+
+  const greedy = greedyAssign(kind, activeTeachers, tasks, normalizedSettings, variant);
+  const optimized = repairUnassigned(
+    kind,
+    activeTeachers,
+    tasks,
+    greedy.assignments,
+    greedy.unassigned,
+    normalizedSettings,
+    variant,
+  );
+  const diversifiedAssignments = mutateAssignments(
+    activeTeachers,
+    tasks,
+    optimized.assignments,
+    normalizedSettings,
+    variant,
+  );
+  const metrics = scenarioMetrics(
+    activeTeachers,
+    diversifiedAssignments,
+    optimized.unassigned,
+    normalizedSettings,
+  );
+  const signature = scenarioSignature(diversifiedAssignments, optimized.unassigned);
+
+  return {
+    id: modelId(signature),
+    style: kind,
+    label: '',
+    tag: '',
+    description: scenarioMeta[kind]?.description ?? scenarioMeta.balanced.description,
+    assignments: diversifiedAssignments,
+    unassigned: optimized.unassigned,
+    relocationCount: optimized.relocationCount,
+    repairedCount: optimized.repairedCount,
+    signature,
+    ...metrics,
+    score: metrics.rankScore,
+    warnings: buildWarnings(metrics.summaries, optimized.unassigned),
+  };
+}
+
+function deduplicateModels(candidates) {
+  const bySignature = new Map();
+  for (const candidate of candidates) {
+    const previous = bySignature.get(candidate.signature);
+    if (!previous || candidate.rankScore < previous.rankScore) {
+      bySignature.set(candidate.signature, candidate);
+    }
+  }
+  return [...bySignature.values()];
+}
+
+function displayTag(model, winners) {
+  const tags = [];
+  if (model.signature === winners.balanced) tags.push('الأكثر توازنًا');
+  if (model.signature === winners.specialized) tags.push('الأكثر تخصصًا');
+  if (model.signature === winners.compact) tags.push('الأقل تشعبًا');
+  return tags.join(' · ') || 'بديل مختلف';
+}
+
+export function rankDistributionModels(candidates, limit = 20) {
+  const unique = deduplicateModels(candidates);
+  const complete = unique.filter((model) => model.unassigned.length === 0 && model.overloadCount === 0);
+  const source = complete.length ? complete : unique;
+  if (!source.length) return [];
+
+  const balancedWinner = [...source].sort((a, b) => (
+    a.unassigned.length - b.unassigned.length
+    || a.utilizationVariance - b.utilizationVariance
+    || a.loadSpread - b.loadSpread
+    || a.rankScore - b.rankScore
+  ))[0];
+  const specializedWinner = [...source].sort((a, b) => (
+    a.unassigned.length - b.unassigned.length
+    || a.flexiblePeriodsCount - b.flexiblePeriodsCount
+    || a.rankScore - b.rankScore
+  ))[0];
+  const compactWinner = [...source].sort((a, b) => (
+    a.unassigned.length - b.unassigned.length
+    || a.compactness - b.compactness
+    || a.rankScore - b.rankScore
+  ))[0];
+  const winners = {
+    balanced: balancedWinner.signature,
+    specialized: specializedWinner.signature,
+    compact: compactWinner.signature,
+  };
+
+  const ordered = [...source].sort((a, b) => a.rankScore - b.rankScore);
+  const selected = [];
+  const winnerSignatures = [...new Set(Object.values(winners))];
+  for (const signature of winnerSignatures) {
+    const model = ordered.find((item) => item.signature === signature);
+    if (model && !selected.some((item) => item.signature === signature)) selected.push(model);
+  }
+
+  while (selected.length < Math.min(limit, ordered.length)) {
+    let best = null;
+    let bestValue = -Infinity;
+    for (const candidate of ordered) {
+      if (selected.some((item) => item.signature === candidate.signature)) continue;
+      const minimumDistance = selected.length
+        ? Math.min(...selected.map((item) => modelDistance(item, candidate)))
+        : 1;
+      const qualityPenalty = candidate.rankScore - ordered[0].rankScore;
+      const value = minimumDistance * 12_000 - qualityPenalty;
+      if (value > bestValue) {
+        best = candidate;
+        bestValue = value;
+      }
+    }
+    if (!best) break;
+    selected.push(best);
+  }
+
+  return selected.map((model, index) => ({
+    ...model,
+    label: `النموذج ${index + 1}`,
+    tag: displayTag(model, winners),
+    description: index === 0
+      ? 'أفضل نتيجة عامة وجدها المحرك ضمن البحث الحالي.'
+      : `يختلف عن النموذج الأول في ${Math.round(modelDistance(selected[0], model) * model.assignments.length)} تكليفات.`,
+  }));
+}
+
+export function generateDistributionModels(
+  teachers,
+  requirements,
+  settings = DEFAULT_SETTINGS,
+  options = {},
+) {
+  const limit = Math.max(1, Number(options.limit) || 20);
+  const attempts = Math.max(limit * 4, Number(options.attempts) || 100);
+  const seedOffset = Math.max(0, Number(options.seedOffset) || 0);
+  const excluded = new Set(options.excludeSignatures || []);
+  const candidates = [];
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const style = MODEL_STYLES[attempt % MODEL_STYLES.length];
+    const seed = seedOffset * 100_003 + attempt + 1;
+    const scenario = generateScenario(style, teachers, requirements, settings, {
+      seed,
+      attempt,
+      variant: createVariant(seed, attempt),
+    });
+    if (!excluded.has(scenario.signature)) candidates.push(scenario);
+  }
+
+  const uniqueCandidates = deduplicateModels(candidates);
+  const models = rankDistributionModels(uniqueCandidates, limit);
+  return {
+    models,
+    attempts,
+    uniqueFound: uniqueCandidates.length,
+    completeFound: uniqueCandidates.filter(
+      (model) => model.unassigned.length === 0 && model.overloadCount === 0,
+    ).length,
   };
 }
 
 export function generateAllScenarios(teachers, requirements, settings = DEFAULT_SETTINGS) {
-  return ['balanced', 'specialized', 'compact']
-    .map((kind) => generateScenario(kind, teachers, requirements, settings));
+  return generateDistributionModels(teachers, requirements, settings, {
+    limit: 20,
+    attempts: 100,
+  }).models;
 }
 
 function requirementExists(requirements, id) {

@@ -8,7 +8,7 @@ const corsHeaders = {
 const responseSchema = {
   type: 'object',
   properties: {
-    recommendedScenario: { type: 'string', enum: ['balanced', 'specialized', 'compact', 'none'] },
+    recommendedScenario: { type: 'string' },
     summary: { type: 'string' },
     strengths: { type: 'array', items: { type: 'string' }, maxItems: 5 },
     warnings: { type: 'array', items: { type: 'string' }, maxItems: 5 },
@@ -25,7 +25,7 @@ serve(async (request) => {
     const model = Deno.env.get('GEMINI_MODEL') || 'gemini-3.6-flash';
     const input = await request.json();
 
-    const prompt = `أنت مراجع تربوي متخصص في توزيع أنصبة المعلمين.\nراجع السيناريوهات المولدة حسابيًا ولا تخترع بيانات جديدة.\nاختر الأنسب وفق الأولويات: عدم وجود تكليفات غير مسندة، عدم تجاوز سقف النصاب، احترام خيارات المستخدم، تقارب الأنصبة، ثم تقليل التشعب.\nإذا كانت البيانات غير كافية اختر none.\nالبيانات:\n${JSON.stringify(input)}`;
+    const prompt = `أنت مراجع تربوي متخصص في توزيع أنصبة المعلمين.\nراجع السيناريوهات المولدة حسابيًا ولا تخترع بيانات جديدة. لديك الآن تفاصيل كل تكليف، لذلك افحص أيضًا إمكانات النقل بين المعلمين إذا بقيت شعبة غير مسندة أو ظهر تفاوت واضح. لا تقترح نقلًا يخالف نطاق تدريس المعلم أو يتجاوز سقف نصابه. اختر معرّف نموذج واحد موجود حرفيًا في البيانات وفق الأولويات: عدم وجود تكليفات غير مسندة، عدم تجاوز سقف النصاب، احترام خيارات المستخدم، تقارب الأنصبة، ثم تقليل التشعب. إذا كانت البيانات غير كافية أعد none.\nالبيانات:\n${JSON.stringify(input)}`;
 
     const geminiResponse = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
@@ -35,7 +35,6 @@ serve(async (request) => {
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: {
-            temperature: 0.15,
             responseMimeType: 'application/json',
             responseSchema,
           },

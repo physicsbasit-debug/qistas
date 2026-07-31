@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { seedData } from '../src/data/seed.js';
 import {
   expandRequirements,
-  generateAllScenarios,
+  generateDistributionModels,
+  generateScenario,
+  modelDistance,
+  scenarioSignature,
   teacherMaxLoad,
   validateInputs,
 } from '../src/engine/distribution.js';
@@ -14,6 +17,12 @@ import {
 } from '../src/domain/assignmentPolicy.js';
 
 const settings = seedData.settings;
+const seedSearch = generateDistributionModels(
+  seedData.teachers,
+  seedData.requirements,
+  settings,
+  { limit: 20, attempts: 100 },
+);
 
 function sampleTeacher(overrides = {}) {
   return {
@@ -39,21 +48,48 @@ test('expands sections and totals 138 periods', () => {
   assert.equal(tasks.reduce((sum, task) => sum + task.periods, 0), 138);
 });
 
-test('generates three internal alternatives', () => {
-  assert.equal(generateAllScenarios(seedData.teachers, seedData.requirements, settings).length, 3);
+test('generates twenty distinct logical models for the science seed', () => {
+  assert.equal(seedSearch.models.length, 20);
+  assert.ok(seedSearch.uniqueFound >= 20);
+  assert.equal(new Set(seedSearch.models.map((model) => model.signature)).size, 20);
 });
 
-test('science seed has no unassigned tasks', () => {
-  for (const scenario of generateAllScenarios(seedData.teachers, seedData.requirements, settings)) {
-    assert.equal(scenario.unassigned.length, 0);
+test('all displayed science models are complete', () => {
+  for (const model of seedSearch.models) assert.equal(model.unassigned.length, 0);
+});
+
+test('does not lose periods in any displayed model', () => {
+  for (const model of seedSearch.models) {
+    const assigned = model.assignments.reduce((sum, item) => sum + item.periods, 0);
+    const unassigned = model.unassigned.reduce((sum, item) => sum + item.periods, 0);
+    assert.equal(assigned + unassigned, 138);
   }
 });
 
-test('does not lose periods', () => {
-  const scenario = generateAllScenarios(seedData.teachers, seedData.requirements, settings)[0];
-  const assigned = scenario.assignments.reduce((sum, item) => sum + item.periods, 0);
-  const unassigned = scenario.unassigned.reduce((sum, item) => sum + item.periods, 0);
-  assert.equal(assigned + unassigned, 138);
+test('generated models differ meaningfully from the first model', () => {
+  assert.ok(seedSearch.models.slice(1).some((model) => (
+    modelDistance(seedSearch.models[0], model) >= 0.2
+  )));
+});
+
+test('additional search excludes models already shown', () => {
+  const excluded = seedSearch.models.map((model) => model.signature);
+  const more = generateDistributionModels(
+    seedData.teachers,
+    seedData.requirements,
+    settings,
+    { limit: 10, attempts: 60, seedOffset: 1, excludeSignatures: excluded },
+  );
+  assert.ok(more.models.length > 0);
+  assert.ok(more.models.every((model) => !excluded.includes(model.signature)));
+});
+
+test('scenario signatures are stable regardless of assignment order', () => {
+  const model = seedSearch.models[0];
+  assert.equal(
+    scenarioSignature(model.assignments, model.unassigned),
+    scenarioSignature([...model.assignments].reverse(), model.unassigned),
+  );
 });
 
 test('invalid global maximum load is rejected', () => {
@@ -65,11 +101,9 @@ test('invalid global maximum load is rejected', () => {
 });
 
 test('all generated loads respect the global role caps', () => {
-  for (const scenario of generateAllScenarios(seedData.teachers, seedData.requirements, settings)) {
-    assert.equal(scenario.overloadCount, 0);
-    for (const summary of scenario.summaries) {
-      assert.ok(summary.load <= summary.maxLoad);
-    }
+  for (const model of seedSearch.models) {
+    assert.equal(model.overloadCount, 0);
+    for (const summary of model.summaries) assert.ok(summary.load <= summary.maxLoad);
   }
 });
 
@@ -188,11 +222,13 @@ test('generator never violates a forbidden grade scope', () => {
       selectedRequirementIds: [],
     },
   });
-  const scenario = generateAllScenarios(
+  const scenario = generateScenario(
+    'balanced',
     [gradeNineTeacher, gradeTenTeacher],
     requirements,
     { teacherMaxLoad: 8, leadMaxLoad: 8 },
-  )[0];
+    { seed: 1, attempt: 0 },
+  );
   assert.equal(scenario.unassigned.length, 0);
   assert.ok(scenario.assignments
     .filter((item) => item.teacherId === 'g9-teacher')
@@ -200,4 +236,67 @@ test('generator never violates a forbidden grade scope', () => {
   assert.ok(scenario.assignments
     .filter((item) => item.teacherId === 'g10-teacher')
     .every((item) => item.grade === 'العاشر'));
+});
+
+test('smart repair finds the two-eighth-and-three-physics model requested by the user', () => {
+  const policy = (mode, grade = '', requirementId = '', extraRequirementId = '') => ({
+    mode,
+    grade,
+    requirementId,
+    extraRequirementId,
+    selectedRequirementIds: [],
+  });
+  const teacher = (id, specialty, assignmentPolicy, isLead = false) => ({
+    id,
+    name: id,
+    specialty,
+    isLead,
+    active: true,
+    assignmentPolicy,
+  });
+
+  const teachers = [
+    teacher('bio-9', 'الأحياء', policy(POLICY_MODES.SPECIALTY_GRADE, 'التاسع')),
+    teacher('bio-10', 'الأحياء', policy(POLICY_MODES.SPECIALTY_GRADE, 'العاشر')),
+    teacher('bio-8', 'الأحياء', policy(POLICY_MODES.SINGLE_REQUIREMENT, '', 'g8-science')),
+    teacher('chem-9', 'الكيمياء', policy(POLICY_MODES.SPECIALTY_GRADE, 'التاسع')),
+    teacher('chem-10', 'الكيمياء', policy(POLICY_MODES.SPECIALTY_GRADE, 'العاشر')),
+    teacher('chem-8', 'الكيمياء', policy(POLICY_MODES.SINGLE_REQUIREMENT, '', 'g8-science')),
+    teacher('physics-1', 'الفيزياء', policy(POLICY_MODES.SPECIALTY_ONLY)),
+    teacher('physics-2', 'الفيزياء', policy(POLICY_MODES.SPECIALTY_PLUS_EXTRA, '', '', 'g8-science')),
+    teacher('lead', 'الفيزياء', policy(POLICY_MODES.SPECIALTY_ONLY), true),
+  ];
+
+  const requirements = [
+    { id: 'g8-science', grade: 'الثامن', subject: 'العلوم العامة', sections: 8, periodsPerSection: 6 },
+    { id: 'g9-physics', grade: 'التاسع', subject: 'الفيزياء', sections: 9, periodsPerSection: 2 },
+    { id: 'g10-physics', grade: 'العاشر', subject: 'الفيزياء', sections: 8, periodsPerSection: 2 },
+    { id: 'g9-chemistry', grade: 'التاسع', subject: 'الكيمياء', sections: 9, periodsPerSection: 2 },
+    { id: 'g10-chemistry', grade: 'العاشر', subject: 'الكيمياء', sections: 8, periodsPerSection: 2 },
+    { id: 'g9-biology', grade: 'التاسع', subject: 'الأحياء', sections: 9, periodsPerSection: 2 },
+    { id: 'g10-biology', grade: 'العاشر', subject: 'الأحياء', sections: 8, periodsPerSection: 2 },
+  ];
+
+  const scenario = generateScenario(
+    'balanced',
+    teachers,
+    requirements,
+    { teacherMaxLoad: 18, leadMaxLoad: 14 },
+    { seed: 1, attempt: 0 },
+  );
+
+  assert.equal(scenario.unassigned.length, 0);
+  assert.equal(scenario.repairedCount, 1);
+  assert.ok(scenario.relocationCount >= 3);
+
+  const physicsTwo = scenario.summaries.find((summary) => summary.teacherId === 'physics-2');
+  assert.equal(physicsTwo.load, 18);
+  assert.equal(
+    physicsTwo.assignments.filter((assignment) => assignment.requirementId === 'g8-science').length,
+    2,
+  );
+  assert.equal(
+    physicsTwo.assignments.filter((assignment) => assignment.subject === 'الفيزياء').length,
+    3,
+  );
 });

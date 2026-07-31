@@ -14,6 +14,7 @@ export async function requestGeminiReview(data, scenarios) {
       schoolName: data.schoolName,
       departmentName: data.departmentName,
       settings: data.settings,
+      requirements: data.requirements,
       teachers: data.teachers.map(({
         id,
         name,
@@ -21,13 +22,29 @@ export async function requestGeminiReview(data, scenarios) {
         isLead,
         assignmentPolicy,
       }) => ({ id, name, specialty, isLead, assignmentPolicy })),
-      scenarios: scenarios.map((scenario) => ({
+      scenarios: scenarios.slice(0, 12).map((scenario) => ({
         id: scenario.id,
         label: scenario.label,
         variance: scenario.variance,
         overloadCount: scenario.overloadCount,
         flexiblePeriodsCount: scenario.flexiblePeriodsCount,
         unassignedCount: scenario.unassigned.length,
+        repairedCount: scenario.repairedCount,
+        relocationCount: scenario.relocationCount,
+        assignments: scenario.assignments.map(({
+          teacherId,
+          grade,
+          subject,
+          section,
+          periods,
+          preference,
+        }) => ({ teacherId, grade, subject, section, periods, preference })),
+        unassigned: scenario.unassigned.map(({
+          grade,
+          subject,
+          section,
+          periods,
+        }) => ({ grade, subject, section, periods })),
         summaries: scenario.summaries.map(({
           teacherId,
           load,

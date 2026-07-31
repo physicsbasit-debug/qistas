@@ -8,12 +8,19 @@ import {
   POLICY_MODES,
   requirementLabel,
 } from './domain/assignmentPolicy.js';
-import { generateAllScenarios, validateInputs } from './engine/distribution.js';
+import {
+  generateDistributionModels,
+  rankDistributionModels,
+  validateInputs,
+} from './engine/distribution.js';
 import { clearAppData, clone, loadAppData, saveAppData } from './services/storage.js';
 import { exportScenarioCsv } from './services/export.js';
 import { requestGeminiReview } from './services/geminiReview.js';
 
 const app = document.querySelector('#app');
+const MODEL_BATCH_SIZE = 20;
+const MAX_DISPLAY_MODELS = 100;
+
 let state = {
   step: 0,
   data: loadAppData(seedData),
@@ -24,6 +31,9 @@ let state = {
   geminiError: '',
   geminiLoading: false,
   notice: '',
+  generating: false,
+  generationRound: 0,
+  searchStats: { attempts: 0, uniqueFound: 0, completeFound: 0 },
 };
 
 const esc = (value = '') => String(value).replace(
@@ -54,6 +64,8 @@ function invalidateResults() {
   state.errors = [];
   state.gemini = null;
   state.geminiError = '';
+  state.generationRound = 0;
+  state.searchStats = { attempts: 0, uniqueFound: 0, completeFound: 0 };
 }
 
 function persistRender() {
@@ -343,14 +355,56 @@ function requirementsPanel() {
     </section>`;
 }
 
-function scenarioSwitcher() {
-  if (state.scenarios.length < 2) return '';
+function modelNavigator(scenario) {
+  if (!scenario || !state.scenarios.length) return '';
+  const currentIndex = Math.max(0, state.scenarios.findIndex((item) => item.id === scenario.id));
+  const canGenerateMore = state.scenarios.length < MAX_DISPLAY_MODELS;
   return `
-    <details class="alternative-plans no-print">
-      <summary>عرض بدائل أخرى</summary>
-      <div class="alternative-actions">
-        ${state.scenarios.map((scenario) => `
-          <button class="button ${scenario.id === state.selectedId ? 'primary' : 'secondary'}" data-action="select-scenario" data-id="${scenario.id}">${esc(scenario.label)}</button>`).join('')}
+    <div class="model-navigator no-print">
+      <div class="model-position">
+        <span>النموذج ${currentIndex + 1} من ${state.scenarios.length}</span>
+        <strong>${esc(scenario.tag)}</strong>
+      </div>
+      <label class="model-select-label">اختر نموذجًا
+        <select data-model-select>
+          ${state.scenarios.map((model, index) => `
+            <option value="${model.id}" ${model.id === scenario.id ? 'selected' : ''}>
+              النموذج ${index + 1} · ${esc(model.tag)} · الفرق ${model.loadSpread}
+            </option>`).join('')}
+        </select>
+      </label>
+      <div class="actions model-actions">
+        <button class="button secondary" data-action="prev-model" ${currentIndex === 0 ? 'disabled' : ''}>السابق</button>
+        <button class="button secondary" data-action="next-model" ${currentIndex >= state.scenarios.length - 1 ? 'disabled' : ''}>التالي</button>
+        <button class="button primary" data-action="generate-more" ${!canGenerateMore || state.generating ? 'disabled' : ''}>
+          ${state.generating ? 'جارٍ البحث…' : 'نماذج إضافية'}
+        </button>
+      </div>
+    </div>`;
+}
+
+function modelComparison() {
+  if (state.scenarios.length < 2) return '';
+  const compared = state.scenarios.slice(0, 8);
+  return `
+    <details class="model-comparison no-print">
+      <summary>مقارنة أفضل ${compared.length} نماذج</summary>
+      <div class="table-wrap compact-table top-gap">
+        <table>
+          <thead><tr><th>النموذج</th><th>التصنيف</th><th>أعلى نصاب</th><th>أقل نصاب</th><th>الفرق</th><th>التشعب</th><th></th></tr></thead>
+          <tbody>
+            ${compared.map((model, index) => `
+              <tr class="${model.id === state.selectedId ? 'selected-model-row' : ''}">
+                <td>النموذج ${index + 1}</td>
+                <td>${esc(model.tag)}</td>
+                <td>${model.highestLoad}</td>
+                <td>${model.lowestLoad}</td>
+                <td>${model.loadSpread}</td>
+                <td>${model.compactness}</td>
+                <td><button class="text-button compact" data-action="select-scenario" data-id="${model.id}">عرض</button></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
       </div>
     </details>`;
 }
@@ -358,9 +412,6 @@ function scenarioSwitcher() {
 function resultsPanel() {
   const scenario = selected();
   const assignedPeriods = scenario?.assignments.reduce((sum, item) => sum + item.periods, 0) || 0;
-  const loads = scenario?.summaries.map((item) => item.load) || [];
-  const highestLoad = loads.length ? Math.max(...loads) : 0;
-  const lowestLoad = loads.length ? Math.min(...loads) : 0;
 
   const unassigned = scenario?.unassigned.length
     ? `<div class="alert error"><strong>هذه الشعب لم تُسند:</strong><div class="chips top-gap">${scenario.unassigned.map((item) => `<span>${esc(item.grade)} / ${item.section} · ${esc(item.subject)} (${item.periods})</span>`).join('')}</div></div>`
@@ -371,7 +422,7 @@ function resultsPanel() {
       <div class="section-heading">
         <div>
           <p class="eyebrow">النتيجة</p>
-          <h2>${esc(scenario.label)}</h2>
+          <h2>${esc(scenario.label)} <span class="model-tag">${esc(scenario.tag)}</span></h2>
           <p class="muted">${esc(scenario.description)}</p>
         </div>
         <div class="actions no-print">
@@ -380,14 +431,17 @@ function resultsPanel() {
         </div>
       </div>
 
+      ${modelNavigator(scenario)}
+
       <div class="kpi-grid four">
         <article class="kpi"><span>الحصص المسندة</span><strong>${assignedPeriods}</strong></article>
-        <article class="kpi"><span>أعلى نصاب</span><strong>${highestLoad}</strong></article>
-        <article class="kpi"><span>أقل نصاب</span><strong>${lowestLoad}</strong></article>
-        <article class="kpi"><span>شعب غير مسندة</span><strong>${scenario.unassigned.length}</strong></article>
+        <article class="kpi"><span>أعلى نصاب</span><strong>${scenario.highestLoad}</strong></article>
+        <article class="kpi"><span>أقل نصاب</span><strong>${scenario.lowestLoad}</strong></article>
+        <article class="kpi"><span>الفرق</span><strong>${scenario.loadSpread}</strong></article>
       </div>
 
       ${scenario.warnings.length ? `<div class="alert warning"><ul>${scenario.warnings.map((warning) => `<li>${esc(warning)}</li>`).join('')}</ul></div>` : '<div class="alert success">اكتمل توزيع جميع الشعب داخل الخيارات التي حددتها.</div>'}
+      ${scenario.repairedCount ? `<div class="alert success smart-repair-note">أعاد قِسطاس موازنة ${scenario.relocationCount} تكليفات لتغطية ${scenario.repairedCount} شعبة كان يمكن أن تبقى غير مسندة في التوزيع التسلسلي.</div>` : ''}
       ${unassigned}
 
       <div class="teacher-results">
@@ -412,7 +466,7 @@ function resultsPanel() {
   }).join('')}
       </div>
 
-      ${scenarioSwitcher()}
+      ${modelComparison()}
     </div>` : '';
 
   const geminiReview = state.gemini ? `
@@ -427,31 +481,36 @@ function resultsPanel() {
       </div>
     </div>` : '';
 
+  const searchMessage = state.scenarios.length
+    ? `<div class="models-found"><strong>عثر قِسطاس على ${state.scenarios.length} نموذجًا مختلفًا${state.searchStats.completeFound ? ' ومكتملًا' : ''}.</strong><span>تم فحص ${state.searchStats.attempts} محاولة توزيع، مع حذف النتائج المكررة تلقائيًا.</span></div>`
+    : '';
+
   return `
     <section class="stack-lg">
       <div class="panel hero-result">
         <div>
           <p class="eyebrow">الخطوة الرابعة</p>
-          <h2>التوزيع</h2>
-          <p class="muted">اضغط مرة واحدة، وسيختار قِسطاس أفضل توزيع داخل الخيارات المحددة.</p>
+          <h2>نماذج التوزيع</h2>
+          <p class="muted">ينشئ قِسطاس أكبر مجموعة عملية من الحلول الصحيحة والمختلفة، ثم يرتبها ويترك الاختيار لك.</p>
         </div>
-        <button class="button primary" data-action="generate">وزّع الأنصبة</button>
+        <button class="button primary" data-action="generate" ${state.generating ? 'disabled' : ''}>${state.generating ? 'جارٍ البحث عن النماذج…' : 'ولّد نماذج التوزيع'}</button>
       </div>
 
       ${state.errors.length ? `<div class="alert error"><strong>راجع هذه النقاط:</strong><ul>${state.errors.map((error) => `<li>${esc(error)}</li>`).join('')}</ul></div>` : ''}
+      ${searchMessage}
       ${result}
 
       ${state.scenarios.length ? `
         <details class="panel ai-panel no-print">
           <summary>مراجعة Gemini الاختيارية</summary>
-          <p class="muted top-gap">Gemini يشرح النتيجة ولا يغير الحساب أو القيود.</p>
+          <p class="muted top-gap">يراجع Gemini أفضل 12 نموذجًا فقط حتى تبقى المراجعة سريعة وواضحة، ولا يغير الحساب أو القيود.</p>
           <div class="form-grid two top-gap">
             <label>رابط Supabase<input id="supabase-url" value="${esc(localStorage.getItem('qistas:supabase-url') || '')}"></label>
             <label>مفتاح Supabase anon<input id="supabase-key" type="password" value="${esc(localStorage.getItem('qistas:supabase-anon-key') || '')}"></label>
           </div>
           <div class="actions top-gap">
             <button class="button secondary" data-action="save-ai-settings">حفظ الاتصال</button>
-            <button class="button ai" data-action="gemini" ${state.geminiLoading ? 'disabled' : ''}>${state.geminiLoading ? 'جارٍ التحليل…' : 'مراجعة التوزيع'}</button>
+            <button class="button ai" data-action="gemini" ${state.geminiLoading ? 'disabled' : ''}>${state.geminiLoading ? 'جارٍ التحليل…' : 'رشّح أفضل نموذج'}</button>
           </div>
           ${state.geminiError ? `<div class="alert error top-gap">${esc(state.geminiError)}</div>` : ''}
           ${geminiReview}
@@ -471,9 +530,9 @@ function render() {
       <main>
         <section class="intro">
           <div>
-            <span class="status-pill">الإصدار 0.3 · أبسط وأوضح</span>
+            <span class="status-pill">الإصدار 0.5 · نماذج متعددة ذكية</span>
             <h1>حدّد من يدرّس ماذا.<br>وقِسطاس يوزّع الباقي.</h1>
-            <p>لا أهداف نصاب لكل معلم، ولا جداول مفضّل ومسموح وممنوع. اختر طريقة التوزيع فقط، ثم راجع النتيجة.</p>
+            <p>حدّد نطاق كل معلم فقط. قِسطاس يبحث عن نماذج صحيحة ومتنوعة، ثم يعرضها مرتبة لتختار الأنسب.</p>
           </div>
           <div class="intro-stat"><span>الحصص المطلوبة</span><strong>${totalPeriods()}</strong><small>${totalSections()} شعبة ومقررًا</small></div>
         </section>
@@ -487,7 +546,7 @@ function render() {
       : state.step === 2 ? requirementsPanel() : resultsPanel()}
         <div class="footer-nav no-print">
           <button class="button secondary" data-action="prev" ${state.step === 0 ? 'disabled' : ''}>السابق</button>
-          <button class="button primary" data-action="next">${state.step < 3 ? 'التالي' : 'وزّع الأنصبة'}</button>
+          <button class="button primary" data-action="next">${state.step < 3 ? 'التالي' : 'ولّد نماذج التوزيع'}</button>
         </div>
       </main>
     </div>`;
@@ -521,6 +580,12 @@ app.addEventListener('change', (event) => {
     else teacherPolicy(teacher)[field] = event.target.value;
     invalidateResults();
     persistRender();
+    return;
+  }
+
+  if (event.target.dataset.modelSelect !== undefined) {
+    state.selectedId = event.target.value;
+    render();
     return;
   }
 
@@ -560,7 +625,7 @@ app.addEventListener('click', async (event) => {
     if (state.step < 3) {
       state.step += 1;
       render();
-    } else generate();
+    } else await generate(false);
   }
 
   if (action === 'reset') {
@@ -575,6 +640,9 @@ app.addEventListener('click', async (event) => {
       geminiError: '',
       geminiLoading: false,
       notice: '',
+      generating: false,
+      generationRound: 0,
+      searchStats: { attempts: 0, uniqueFound: 0, completeFound: 0 },
     };
     persistRender();
   }
@@ -630,12 +698,22 @@ app.addEventListener('click', async (event) => {
     persistRender();
   }
 
-  if (action === 'generate') generate();
+  if (action === 'generate') await generate(false);
 
   if (action === 'select-scenario') {
     state.selectedId = button.dataset.id;
     render();
   }
+
+  if (action === 'prev-model' || action === 'next-model') {
+    const currentIndex = Math.max(0, state.scenarios.findIndex((item) => item.id === state.selectedId));
+    const direction = action === 'prev-model' ? -1 : 1;
+    const nextIndex = Math.max(0, Math.min(state.scenarios.length - 1, currentIndex + direction));
+    state.selectedId = state.scenarios[nextIndex]?.id || state.selectedId;
+    render();
+  }
+
+  if (action === 'generate-more') await generate(true);
 
   if (action === 'export' && selected()) exportScenarioCsv(selected(), state.data.teachers);
   if (action === 'print') window.print();
@@ -652,7 +730,7 @@ app.addEventListener('click', async (event) => {
     render();
     try {
       state.gemini = await requestGeminiReview(state.data, state.scenarios);
-      if (state.gemini.recommendedScenario !== 'none') {
+      if (state.scenarios.some((scenario) => scenario.id === state.gemini.recommendedScenario)) {
         state.selectedId = state.gemini.recommendedScenario;
       }
     } catch (error) {
@@ -664,7 +742,7 @@ app.addEventListener('click', async (event) => {
   }
 });
 
-function generate() {
+async function generate(more = false) {
   state.errors = validateInputs(
     state.data.teachers,
     state.data.requirements,
@@ -673,16 +751,51 @@ function generate() {
   state.gemini = null;
   state.geminiError = '';
 
-  if (!state.errors.length) {
-    state.scenarios = generateAllScenarios(
+  if (state.errors.length) {
+    render();
+    return;
+  }
+
+  state.generating = true;
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  try {
+    const excludeSignatures = more ? state.scenarios.map((scenario) => scenario.signature) : [];
+    const result = generateDistributionModels(
       state.data.teachers,
       state.data.requirements,
       state.data.settings,
+      {
+        limit: MODEL_BATCH_SIZE,
+        attempts: 100,
+        seedOffset: more ? state.generationRound + 1 : 0,
+        excludeSignatures,
+      },
     );
-    state.selectedId = [...state.scenarios]
-      .sort((a, b) => a.score - b.score)[0]?.id || 'balanced';
+
+    const previousSelectedId = state.selectedId;
+    const combined = more ? [...state.scenarios, ...result.models] : result.models;
+    state.scenarios = rankDistributionModels(combined, MAX_DISPLAY_MODELS);
+    state.generationRound = more ? state.generationRound + 1 : 0;
+    state.searchStats = {
+      attempts: (more ? state.searchStats.attempts : 0) + result.attempts,
+      uniqueFound: state.scenarios.length,
+      completeFound: state.scenarios.filter(
+        (scenario) => scenario.unassigned.length === 0 && scenario.overloadCount === 0,
+      ).length,
+    };
+    state.selectedId = more && state.scenarios.some((scenario) => scenario.id === previousSelectedId)
+      ? previousSelectedId
+      : state.scenarios[0]?.id || '';
+    state.notice = more && !result.models.length
+      ? 'لم يعثر البحث الإضافي على نموذج جديد مختلف.'
+      : '';
+  } finally {
+    state.generating = false;
+    render();
   }
-  render();
 }
+
 
 render();
