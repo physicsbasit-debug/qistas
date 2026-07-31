@@ -8,7 +8,7 @@ export async function requestGeminiReview(data, scenarios) {
     body: JSON.stringify({
       schoolName: data.schoolName,
       departmentName: data.departmentName,
-      teachers: data.teachers.map(({ id, name, specialty, minLoad, targetLoad, maxLoad, isLead }) => ({ id, name, specialty, minLoad, targetLoad, maxLoad, isLead })),
+      teachers: data.teachers.map(({ id, name, specialty, minLoad, targetLoad, maxLoad, isLead, assignmentPolicy }) => ({ id, name, specialty, minLoad, targetLoad, maxLoad, isLead, assignmentPolicy })),
       scenarios: scenarios.map((s) => ({
         id: s.id, label: s.label, variance: s.variance, overloadCount: s.overloadCount,
         underMinCount: s.underMinCount, outsideSpecialtyCount: s.outsideSpecialtyCount,

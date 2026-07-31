@@ -16,3 +16,67 @@ test('invalid load bounds are rejected',()=>{const bad=[{...seedData.teachers[0]
 test('balanced science scenario respects maximum loads',()=>{const s=generateAllScenarios(seedData.teachers,seedData.requirements)[0];assert.equal(s.overloadCount,0);});
 test('balanced science scenario satisfies minimum loads when feasible',()=>{const s=generateAllScenarios(seedData.teachers,seedData.requirements)[0];assert.equal(s.underMinCount,0);});
 test('all science scenarios stay within configured bounds',()=>{for(const s of generateAllScenarios(seedData.teachers,seedData.requirements)){assert.equal(s.overloadCount,0);assert.equal(s.underMinCount,0);}});
+
+import { ASSIGNMENT_STATUS, getAssignmentStatus, POLICY_MODES } from '../src/domain/assignmentPolicy.js';
+
+function sampleTeacher(overrides = {}) {
+  return {
+    id: 't1',
+    name: 'معلم تجريبي',
+    specialty: 'الأحياء',
+    allowedSubjects: ['الأحياء', 'العلوم العامة'],
+    minLoad: 0,
+    targetLoad: 12,
+    maxLoad: 24,
+    isLead: false,
+    active: true,
+    assignmentPolicy: { mode: POLICY_MODES.USUAL, grade: '', requirementId: '', extraRequirementId: '', customRules: {} },
+    ...overrides,
+  };
+}
+
+test('specialty-grade policy forbids the same specialty in other grades', () => {
+  const teacher = sampleTeacher({
+    assignmentPolicy: { mode: POLICY_MODES.SPECIALTY_GRADE, grade: 'التاسع', requirementId: '', extraRequirementId: '', customRules: {} },
+  });
+  assert.equal(getAssignmentStatus(teacher, { id: 'g9-bio', grade: 'التاسع', subject: 'الأحياء' }), ASSIGNMENT_STATUS.PREFERRED);
+  assert.equal(getAssignmentStatus(teacher, { id: 'g10-bio', grade: 'العاشر', subject: 'الأحياء' }), ASSIGNMENT_STATUS.FORBIDDEN);
+});
+
+test('single requirement policy can dedicate a teacher to general science only', () => {
+  const teacher = sampleTeacher({
+    assignmentPolicy: { mode: POLICY_MODES.SINGLE_REQUIREMENT, grade: '', requirementId: 'g8-science', extraRequirementId: '', customRules: {} },
+  });
+  assert.equal(getAssignmentStatus(teacher, { id: 'g8-science', grade: 'الثامن', subject: 'العلوم العامة' }), ASSIGNMENT_STATUS.PREFERRED);
+  assert.equal(getAssignmentStatus(teacher, { id: 'g9-bio', grade: 'التاسع', subject: 'الأحياء' }), ASSIGNMENT_STATUS.FORBIDDEN);
+});
+
+test('specialty plus extra policy permits one extra grade-subject requirement', () => {
+  const teacher = sampleTeacher({
+    assignmentPolicy: { mode: POLICY_MODES.SPECIALTY_PLUS_EXTRA, grade: '', requirementId: '', extraRequirementId: 'g8-science', customRules: {} },
+  });
+  assert.equal(getAssignmentStatus(teacher, { id: 'g9-bio', grade: 'التاسع', subject: 'الأحياء' }), ASSIGNMENT_STATUS.PREFERRED);
+  assert.equal(getAssignmentStatus(teacher, { id: 'g8-science', grade: 'الثامن', subject: 'العلوم العامة' }), ASSIGNMENT_STATUS.ALLOWED);
+  assert.equal(getAssignmentStatus(teacher, { id: 'g9-chem', grade: 'التاسع', subject: 'الكيمياء' }), ASSIGNMENT_STATUS.FORBIDDEN);
+});
+
+test('generator never violates a forbidden grade scope', () => {
+  const requirements = [
+    { id: 'g9-bio', grade: 'التاسع', subject: 'الأحياء', sections: 2, periodsPerSection: 2 },
+    { id: 'g10-bio', grade: 'العاشر', subject: 'الأحياء', sections: 2, periodsPerSection: 2 },
+  ];
+  const gradeNineTeacher = sampleTeacher({
+    id: 'g9-teacher',
+    maxLoad: 8,
+    assignmentPolicy: { mode: POLICY_MODES.SPECIALTY_GRADE, grade: 'التاسع', requirementId: '', extraRequirementId: '', customRules: {} },
+  });
+  const gradeTenTeacher = sampleTeacher({
+    id: 'g10-teacher',
+    maxLoad: 8,
+    assignmentPolicy: { mode: POLICY_MODES.SPECIALTY_GRADE, grade: 'العاشر', requirementId: '', extraRequirementId: '', customRules: {} },
+  });
+  const scenario = generateAllScenarios([gradeNineTeacher, gradeTenTeacher], requirements)[0];
+  assert.equal(scenario.unassigned.length, 0);
+  assert.ok(scenario.assignments.filter((item) => item.teacherId === 'g9-teacher').every((item) => item.grade === 'التاسع'));
+  assert.ok(scenario.assignments.filter((item) => item.teacherId === 'g10-teacher').every((item) => item.grade === 'العاشر'));
+});

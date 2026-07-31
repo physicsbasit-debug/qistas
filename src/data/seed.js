@@ -1,10 +1,16 @@
+import { createDefaultAssignmentPolicy } from '../domain/assignmentPolicy.js';
+
 const teacher = (id, name, specialty, allowedSubjects, targetLoad, isLead = false) => ({
-  id, name, specialty, allowedSubjects,
+  id,
+  name,
+  specialty,
+  allowedSubjects,
   minLoad: Math.max(0, targetLoad - 2),
   targetLoad,
   maxLoad: targetLoad + 2,
   isLead,
   active: true,
+  assignmentPolicy: createDefaultAssignmentPolicy(),
 });
 
 export const seedData = {
