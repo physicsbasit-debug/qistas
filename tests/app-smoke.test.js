@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-test('app renders setup and teacher controls without a browser runtime error', async () => {
+test('app renders the simplified teacher controls without browser runtime errors', async () => {
   const listeners = new Map();
   const appRoot = {
     innerHTML: '',
@@ -24,7 +24,7 @@ test('app renders setup and teacher controls without a browser runtime error', a
 
   await import(`../src/app.js?smoke=${Date.now()}`);
   assert.match(appRoot.innerHTML, /قِسطاس/);
-  assert.match(appRoot.innerHTML, /بيانات الخطة/);
+  assert.match(appRoot.innerHTML, /سقف الأنصبة/);
 
   const click = listeners.get('click');
   await click({
@@ -33,7 +33,9 @@ test('app renders setup and teacher controls without a browser runtime error', a
     },
   });
 
-  assert.match(appRoot.innerHTML, /المعلمون والتحكم في التوزيع/);
-  assert.match(appRoot.innerHTML, /تخصصه في صف واحد فقط/);
-  assert.match(appRoot.innerHTML, /تطبيقه على نفس التخصص/);
+  assert.match(appRoot.innerHTML, /<h2>المعلمون<\/h2>/);
+  assert.match(appRoot.innerHTML, /تخصصه في صف واحد/);
+  assert.match(appRoot.innerHTML, /الدور/);
+  assert.doesNotMatch(appRoot.innerHTML, /المستهدف<input/);
+  assert.doesNotMatch(appRoot.innerHTML, /مسموح عند الحاجة/);
 });

@@ -1,4 +1,9 @@
-import { createDefaultAssignmentPolicy, normalizeAssignmentPolicy } from '../domain/assignmentPolicy.js';
+import {
+  buildInitialCustomSelection,
+  createDefaultAssignmentPolicy,
+  normalizeAssignmentPolicy,
+  POLICY_MODES,
+} from '../domain/assignmentPolicy.js';
 
 const STORAGE_KEY = 'qistas:v1';
 
@@ -6,36 +11,63 @@ export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function normalizeTeacher(teacher) {
+function normalizeRequirements(source, fallback) {
+  const requirements = Array.isArray(source?.requirements)
+    ? source.requirements
+    : fallback.requirements;
+
+  return requirements.map((requirement) => ({
+    ...requirement,
+    sections: Number(requirement.sections) || 0,
+    periodsPerSection: Number(requirement.periodsPerSection) || 0,
+  }));
+}
+
+function normalizeTeacher(teacher, requirements) {
+  let assignmentPolicy = teacher.assignmentPolicy
+    ? normalizeAssignmentPolicy(teacher.assignmentPolicy)
+    : createDefaultAssignmentPolicy();
+
+  if (teacher.assignmentPolicy?.mode === 'usual') {
+    assignmentPolicy = {
+      ...assignmentPolicy,
+      mode: POLICY_MODES.CUSTOM,
+      selectedRequirementIds: buildInitialCustomSelection(teacher, requirements),
+    };
+  }
+
+  if (assignmentPolicy.mode === POLICY_MODES.CUSTOM
+    && assignmentPolicy.selectedRequirementIds.length === 0) {
+    assignmentPolicy.selectedRequirementIds = buildInitialCustomSelection(teacher, requirements);
+  }
+
   return {
     ...teacher,
     allowedSubjects: Array.isArray(teacher.allowedSubjects) ? teacher.allowedSubjects : [],
-    minLoad: Number(teacher.minLoad) || 0,
-    targetLoad: Number(teacher.targetLoad) || 0,
-    maxLoad: Number(teacher.maxLoad) || 0,
     isLead: Boolean(teacher.isLead),
     active: teacher.active !== false,
-    assignmentPolicy: teacher.assignmentPolicy
-      ? normalizeAssignmentPolicy(teacher.assignmentPolicy)
-      : createDefaultAssignmentPolicy(),
+    assignmentPolicy,
   };
 }
 
 export function normalizeAppData(data, fallback) {
   const source = data && typeof data === 'object' ? data : fallback;
+  const requirements = normalizeRequirements(source, fallback);
+  const sourceSettings = source.settings && typeof source.settings === 'object'
+    ? source.settings
+    : {};
+
   return {
     ...clone(fallback),
     ...source,
+    settings: {
+      teacherMaxLoad: Number(sourceSettings.teacherMaxLoad) || 18,
+      leadMaxLoad: Number(sourceSettings.leadMaxLoad) || 12,
+    },
     teachers: Array.isArray(source.teachers)
-      ? source.teachers.map(normalizeTeacher)
+      ? source.teachers.map((teacher) => normalizeTeacher(teacher, requirements))
       : clone(fallback.teachers),
-    requirements: Array.isArray(source.requirements)
-      ? source.requirements.map((requirement) => ({
-        ...requirement,
-        sections: Number(requirement.sections) || 0,
-        periodsPerSection: Number(requirement.periodsPerSection) || 0,
-      }))
-      : clone(fallback.requirements),
+    requirements,
   };
 }
 

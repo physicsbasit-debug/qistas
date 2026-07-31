@@ -25,7 +25,7 @@ serve(async (request) => {
     const model = Deno.env.get('GEMINI_MODEL') || 'gemini-3.6-flash';
     const input = await request.json();
 
-    const prompt = `أنت مراجع تربوي متخصص في توزيع أنصبة المعلمين.\nراجع السيناريوهات المولدة حسابيًا ولا تخترع بيانات جديدة.\nاختر الأنسب وفق الأولويات: عدم وجود تكليفات غير مسندة، عدم تجاوز الحد الأعلى، احترام التخصص، تقارب الأنصبة، ثم تقليل التشعب.\nإذا كانت البيانات غير كافية اختر none.\nالبيانات:\n${JSON.stringify(input)}`;
+    const prompt = `أنت مراجع تربوي متخصص في توزيع أنصبة المعلمين.\nراجع السيناريوهات المولدة حسابيًا ولا تخترع بيانات جديدة.\nاختر الأنسب وفق الأولويات: عدم وجود تكليفات غير مسندة، عدم تجاوز سقف النصاب، احترام خيارات المستخدم، تقارب الأنصبة، ثم تقليل التشعب.\nإذا كانت البيانات غير كافية اختر none.\nالبيانات:\n${JSON.stringify(input)}`;
 
     const geminiResponse = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,

@@ -1,25 +1,37 @@
-const teacher = (id, name, specialty, allowedSubjects, targetLoad, isLead = false) => ({
-  id, name, specialty, allowedSubjects,
-  minLoad: Math.max(0, targetLoad - 2),
-  targetLoad,
-  maxLoad: targetLoad + 2,
+import { POLICY_MODES } from '../domain/assignmentPolicy.js';
+
+const teacher = (id, name, specialty, isLead = false) => ({
+  id,
+  name,
+  specialty,
   isLead,
   active: true,
+  assignmentPolicy: {
+    mode: POLICY_MODES.SPECIALTY_PLUS_EXTRA,
+    grade: '',
+    requirementId: '',
+    extraRequirementId: 'g8-science',
+    selectedRequirementIds: [],
+  },
 });
 
 export const seedData = {
   schoolName: 'المدرسة النموذجية',
   departmentName: 'قسم العلوم',
+  settings: {
+    teacherMaxLoad: 18,
+    leadMaxLoad: 12,
+  },
   teachers: [
-    teacher('bio-1', 'معلم أحياء 1', 'الأحياء', ['الأحياء', 'العلوم العامة'], 16),
-    teacher('bio-2', 'معلم أحياء 2', 'الأحياء', ['الأحياء', 'العلوم العامة'], 16),
-    teacher('bio-3', 'معلم أحياء 3', 'الأحياء', ['الأحياء', 'العلوم العامة'], 16),
-    teacher('chem-1', 'معلم كيمياء 1', 'الكيمياء', ['الكيمياء', 'العلوم العامة'], 16),
-    teacher('chem-2', 'معلم كيمياء 2', 'الكيمياء', ['الكيمياء', 'العلوم العامة'], 16),
-    teacher('chem-3', 'معلم كيمياء 3', 'الكيمياء', ['الكيمياء', 'العلوم العامة'], 16),
-    teacher('phy-1', 'معلم فيزياء 1', 'الفيزياء', ['الفيزياء', 'العلوم العامة'], 18),
-    teacher('phy-2', 'معلم فيزياء 2', 'الفيزياء', ['الفيزياء', 'العلوم العامة'], 18),
-    teacher('lead-1', 'المعلم الأول', 'الفيزياء', ['الفيزياء', 'العلوم العامة'], 10, true),
+    teacher('bio-1', 'معلم أحياء 1', 'الأحياء'),
+    teacher('bio-2', 'معلم أحياء 2', 'الأحياء'),
+    teacher('bio-3', 'معلم أحياء 3', 'الأحياء'),
+    teacher('chem-1', 'معلم كيمياء 1', 'الكيمياء'),
+    teacher('chem-2', 'معلم كيمياء 2', 'الكيمياء'),
+    teacher('chem-3', 'معلم كيمياء 3', 'الكيمياء'),
+    teacher('phy-1', 'معلم فيزياء 1', 'الفيزياء'),
+    teacher('phy-2', 'معلم فيزياء 2', 'الفيزياء'),
+    teacher('lead-1', 'المعلم الأول', 'الفيزياء', true),
   ],
   requirements: [
     { id: 'g8-science', grade: 'الثامن', subject: 'العلوم العامة', sections: 8, periodsPerSection: 6 },

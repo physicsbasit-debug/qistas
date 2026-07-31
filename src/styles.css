@@ -291,3 +291,79 @@ summary { cursor: pointer; font-weight: 700; }
   .teacher-results { grid-template-columns: repeat(2, 1fr); }
   .teacher-card { break-inside: avoid; }
 }
+
+/* v0.3: simplified teacher controls */
+.simple-settings {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(120px, 180px) minmax(120px, 180px);
+  gap: 14px;
+  align-items: end;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #f8fbfa;
+}
+.simple-settings p { margin: 5px 0 0; }
+.teacher-simple-grid {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr .8fr 1.45fr;
+  gap: 12px;
+}
+.policy-box.simplified { background: #f8fbfa; }
+.simple-selection { display: grid; gap: 12px; }
+.simple-selection > strong { font-size: 13px; }
+.simple-selection > p { margin: -6px 0 0; font-size: 12px; }
+.selection-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.selection-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #dfe7e5;
+  border-radius: 12px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+.selection-item.selected {
+  border-color: #8bc9bf;
+  background: #edf8f5;
+  color: #0b6558;
+}
+.selection-item input { flex: 0 0 auto; }
+.selection-item span { line-height: 1.5; }
+.chips span.flexible {
+  background: #eef7f5;
+  border-color: #c6e3dd;
+  color: #245d55;
+}
+.alternative-plans {
+  border-top: 1px solid #edf1f0;
+  padding-top: 13px;
+}
+.alternative-plans summary {
+  color: #3f5e5a;
+  font-size: 13px;
+}
+.alternative-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+@media (max-width: 900px) {
+  .simple-settings { grid-template-columns: 1fr 1fr; }
+  .simple-settings > div { grid-column: 1 / -1; }
+  .teacher-simple-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 580px) {
+  .simple-settings, .teacher-simple-grid, .selection-grid { grid-template-columns: 1fr; }
+  .simple-settings > div { grid-column: auto; }
+}

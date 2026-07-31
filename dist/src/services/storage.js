@@ -1,13 +1,90 @@
+import {
+  buildInitialCustomSelection,
+  createDefaultAssignmentPolicy,
+  normalizeAssignmentPolicy,
+  POLICY_MODES,
+} from '../domain/assignmentPolicy.js';
+
 const STORAGE_KEY = 'qistas:v1';
-export function clone(value) { return JSON.parse(JSON.stringify(value)); }
+
+export function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function normalizeRequirements(source, fallback) {
+  const requirements = Array.isArray(source?.requirements)
+    ? source.requirements
+    : fallback.requirements;
+
+  return requirements.map((requirement) => ({
+    ...requirement,
+    sections: Number(requirement.sections) || 0,
+    periodsPerSection: Number(requirement.periodsPerSection) || 0,
+  }));
+}
+
+function normalizeTeacher(teacher, requirements) {
+  let assignmentPolicy = teacher.assignmentPolicy
+    ? normalizeAssignmentPolicy(teacher.assignmentPolicy)
+    : createDefaultAssignmentPolicy();
+
+  if (teacher.assignmentPolicy?.mode === 'usual') {
+    assignmentPolicy = {
+      ...assignmentPolicy,
+      mode: POLICY_MODES.CUSTOM,
+      selectedRequirementIds: buildInitialCustomSelection(teacher, requirements),
+    };
+  }
+
+  if (assignmentPolicy.mode === POLICY_MODES.CUSTOM
+    && assignmentPolicy.selectedRequirementIds.length === 0) {
+    assignmentPolicy.selectedRequirementIds = buildInitialCustomSelection(teacher, requirements);
+  }
+
+  return {
+    ...teacher,
+    allowedSubjects: Array.isArray(teacher.allowedSubjects) ? teacher.allowedSubjects : [],
+    isLead: Boolean(teacher.isLead),
+    active: teacher.active !== false,
+    assignmentPolicy,
+  };
+}
+
+export function normalizeAppData(data, fallback) {
+  const source = data && typeof data === 'object' ? data : fallback;
+  const requirements = normalizeRequirements(source, fallback);
+  const sourceSettings = source.settings && typeof source.settings === 'object'
+    ? source.settings
+    : {};
+
+  return {
+    ...clone(fallback),
+    ...source,
+    settings: {
+      teacherMaxLoad: Number(sourceSettings.teacherMaxLoad) || 18,
+      leadMaxLoad: Number(sourceSettings.leadMaxLoad) || 12,
+    },
+    teachers: Array.isArray(source.teachers)
+      ? source.teachers.map((teacher) => normalizeTeacher(teacher, requirements))
+      : clone(fallback.teachers),
+    requirements,
+  };
+}
+
 export function loadAppData(fallback) {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return clone(fallback);
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed.teachers) || !Array.isArray(parsed.requirements)) return clone(fallback);
-    return parsed;
-  } catch { return clone(fallback); }
+    if (!raw) return normalizeAppData(fallback, fallback);
+    return normalizeAppData(JSON.parse(raw), fallback);
+  } catch {
+    return normalizeAppData(fallback, fallback);
+  }
 }
-export function saveAppData(data) { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
-export function clearAppData() { localStorage.removeItem(STORAGE_KEY); }
+
+export function saveAppData(data) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+export function clearAppData() {
+  localStorage.removeItem(STORAGE_KEY);
+}
