@@ -26,7 +26,7 @@ test('app renders simplified controls and multiple-model results without browser
   assert.match(appRoot.innerHTML, /قِسطاس/);
   assert.match(appRoot.innerHTML, /سقف الأنصبة/);
   assert.doesNotMatch(appRoot.innerHTML, /Gemini|Supabase/);
-  assert.match(appRoot.innerHTML, /الإصدار 0\.6\.0/);
+  assert.match(appRoot.innerHTML, /الإصدار 0\.7\.0/);
 
   const click = listeners.get('click');
   await click({

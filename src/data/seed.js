@@ -1,5 +1,12 @@
 import { POLICY_MODES } from '../domain/assignmentPolicy.js';
 
+const defaultAcademicYear = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const startYear = now.getMonth() >= 5 ? year : year - 1;
+  return `${startYear}/${startYear + 1}`;
+};
+
 const teacher = (id, name, specialty, isLead = false) => ({
   id,
   name,
@@ -18,6 +25,7 @@ const teacher = (id, name, specialty, isLead = false) => ({
 export const seedData = {
   schoolName: 'المدرسة النموذجية',
   departmentName: 'قسم العلوم',
+  academicYear: defaultAcademicYear(),
   settings: {
     teacherMaxLoad: 18,
     leadMaxLoad: 12,

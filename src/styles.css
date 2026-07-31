@@ -557,3 +557,10 @@ summary { cursor: pointer; font-weight: 700; }
   .transfer-candidates { grid-template-columns: 1fr; }
   .transfer-footer { align-items: flex-start; flex-direction: column; }
 }
+
+
+/* v0.7: official report setup */
+.form-grid.three { grid-template-columns: 1.35fr 1fr .75fr; }
+@media (max-width: 900px) {
+  .form-grid.three { grid-template-columns: 1fr; }
+}

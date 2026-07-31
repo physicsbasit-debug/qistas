@@ -26,7 +26,7 @@ import {
   saveAppData,
   saveWorkspace,
 } from './services/storage.js';
-import { exportScenarioCsv } from './services/export.js';
+import { exportScenarioCsv, printScenarioReport } from './services/export.js';
 
 const app = document.querySelector('#app');
 const MODEL_BATCH_SIZE = 20;
@@ -185,12 +185,15 @@ function setupPanel() {
         <p class="muted">أدخل اسم المدرسة واضبط سقف النصاب مرة واحدة. التطبيق يتولى الموازنة، فلا حاجة لهدف وأدنى وأعلى لكل معلم.</p>
       </div>
 
-      <div class="form-grid two">
+      <div class="form-grid three">
         <label>اسم المدرسة
           <input data-path="root::schoolName" value="${esc(state.data.schoolName)}">
         </label>
         <label>القسم أو المجال
           <input data-path="root::departmentName" value="${esc(state.data.departmentName)}">
+        </label>
+        <label>السنة الدراسية
+          <input data-path="root::academicYear" value="${esc(state.data.academicYear || '')}" placeholder="2026/2027">
         </label>
       </div>
 
@@ -610,7 +613,7 @@ function draftPanel() {
           </div>
           <div class="actions no-print">
             <button class="button secondary" data-action="export-draft">تصدير CSV</button>
-            <button class="button secondary" data-action="print">طباعة / PDF</button>
+            <button class="button secondary" data-action="print">تقرير PDF رسمي</button>
           </div>
         </div>
 
@@ -685,7 +688,7 @@ function modelResultsPanel() {
         <div class="actions no-print">
           <button class="button primary" data-action="adopt-model">اعتماد مبدئي وتعديل</button>
           <button class="button secondary" data-action="export">تصدير CSV</button>
-          <button class="button secondary" data-action="print">طباعة / PDF</button>
+          <button class="button secondary" data-action="print">تقرير PDF رسمي</button>
         </div>
       </div>
 
@@ -946,7 +949,7 @@ function render() {
       <main>
         <section class="intro">
           <div>
-            <span class="status-pill">الإصدار 0.6.0 · تثبيت ونقل وإعادة توزيع</span>
+            <span class="status-pill">الإصدار 0.7.0 · تقرير رسمي منظم</span>
             <h1>حدّد من يدرّس ماذا.<br>وقِسطاس يوزّع الباقي.</h1>
             <p>حدّد نطاق كل معلم فقط. قِسطاس يبحث عن نماذج صحيحة ومتنوعة، ثم يعرضها مرتبة لتختار الأنسب.</p>
           </div>
@@ -1187,7 +1190,18 @@ app.addEventListener('click', async (event) => {
   }
 
   if (action === 'export' && selected()) exportScenarioCsv(selected(), state.data.teachers);
-  if (action === 'print') window.print();
+  if (action === 'print') {
+    const isDraft = state.resultView === 'draft' && state.draft?.scenario;
+    const scenario = isDraft ? state.draft.scenario : selected();
+    if (scenario) {
+      printScenarioReport(scenario, state.data, {
+        approved: Boolean(isDraft && state.draft.approved),
+        approvedAt: isDraft ? state.draft.approvedAt : '',
+        isDraft: Boolean(isDraft && !state.draft.approved),
+        planLabel: scenario.label,
+      });
+    }
+  }
 
 });
 
