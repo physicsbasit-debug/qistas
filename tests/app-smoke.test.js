@@ -25,8 +25,10 @@ test('app renders simplified controls and multiple-model results without browser
   await import(`../src/app.js?smoke=${Date.now()}`);
   assert.match(appRoot.innerHTML, /قِسطاس/);
   assert.match(appRoot.innerHTML, /سقف الأنصبة/);
+  assert.match(appRoot.innerHTML, /الصفوف التي تخدمها المدرسة/);
+  assert.match(appRoot.innerHTML, /1-12/);
   assert.doesNotMatch(appRoot.innerHTML, /Gemini|Supabase/);
-  assert.match(appRoot.innerHTML, /الإصدار 0\.9\.0/);
+  assert.match(appRoot.innerHTML, /الإصدار 1\.0\.0/);
 
   const click = listeners.get('click');
   await click({
@@ -99,15 +101,20 @@ test('app renders simplified controls and multiple-model results without browser
       closest() { return { dataset: { action: 'toggle-teacher-lock', id: lockedTeacherId } }; },
     },
   });
-  const taskMatch = appRoot.innerHTML.match(/data-action="select-transfer" data-task-id="([^"]+)"/);
-  assert.ok(taskMatch);
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'select-transfer', taskId: taskMatch[1] } }; },
-    },
-  });
+  const taskIds = [...appRoot.innerHTML.matchAll(/data-action="select-transfer" data-task-id="([^"]+)"/g)]
+    .map((match) => match[1]);
+  assert.ok(taskIds.length);
+  let moveMatch = null;
+  for (const taskId of taskIds) {
+    await click({
+      target: {
+        closest() { return { dataset: { action: 'select-transfer', taskId } }; },
+      },
+    });
+    moveMatch = appRoot.innerHTML.match(/data-action="move-task" data-task-id="([^"]+)" data-teacher-id="([^"]+)"/);
+    if (moveMatch) break;
+  }
   assert.match(appRoot.innerHTML, /نقل شعبة/);
-  const moveMatch = appRoot.innerHTML.match(/data-action="move-task" data-task-id="([^"]+)" data-teacher-id="([^"]+)"/);
   assert.ok(moveMatch);
   await click({
     target: {

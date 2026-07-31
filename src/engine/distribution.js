@@ -4,6 +4,7 @@ import {
   normalizeAssignmentPolicy,
   POLICY_MODES,
 } from '../domain/assignmentPolicy.js';
+import { compareGrades } from '../domain/grades.js';
 
 const DEFAULT_SETTINGS = Object.freeze({
   teacherMaxLoad: 18,
@@ -553,7 +554,7 @@ function repairUnassigned(
 
   const assignments = repairAssignmentsView(state).sort((a, b) => (
     a.teacherId.localeCompare(b.teacherId)
-    || a.grade.localeCompare(b.grade, 'ar')
+    || compareGrades(a.grade, b.grade)
     || a.subject.localeCompare(b.subject, 'ar')
     || a.section - b.section
   ));

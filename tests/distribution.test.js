@@ -15,6 +15,7 @@ import {
   getAssignmentStatus,
   POLICY_MODES,
 } from '../src/domain/assignmentPolicy.js';
+import { compareGrades } from '../src/domain/grades.js';
 
 const settings = seedData.settings;
 const seedSearch = generateDistributionModels(
@@ -403,5 +404,34 @@ test('scenario evaluation recalculates loads after a manual transfer', async () 
   assert.equal(
     evaluated.summaries.find((summary) => summary.teacherId === destination.id).load,
     beforeDestination + biologyAssignment.periods,
+  );
+});
+
+test('distribution engine supports requirements from grade 1 through grade 12', () => {
+  const requirements = [
+    { id: 'g1-arabic', grade: 'الأول', subject: 'اللغة العربية', sections: 1, periodsPerSection: 4 },
+    { id: 'g12-arabic', grade: 'الثاني عشر', subject: 'اللغة العربية', sections: 1, periodsPerSection: 4 },
+  ];
+  const teachers = [sampleTeacher({
+    id: 'arabic-1',
+    name: 'معلم لغة عربية',
+    specialty: 'اللغة العربية',
+    assignmentPolicy: {
+      mode: POLICY_MODES.SPECIALTY_ONLY,
+      grade: '',
+      requirementId: '',
+      extraRequirementId: '',
+      selectedRequirementIds: [],
+    },
+  })];
+  const result = generateDistributionModels(teachers, requirements, {
+    teacherMaxLoad: 18,
+    leadMaxLoad: 12,
+  }, { limit: 3, attempts: 10 });
+  assert.ok(result.models.length > 0);
+  assert.equal(result.models[0].unassigned.length, 0);
+  assert.deepEqual(
+    result.models[0].assignments.map((assignment) => assignment.grade).sort(compareGrades),
+    ['الأول', 'الثاني عشر'],
   );
 });

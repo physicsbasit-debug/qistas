@@ -4,6 +4,7 @@ import {
   normalizeAssignmentPolicy,
   POLICY_MODES,
 } from '../domain/assignmentPolicy.js';
+import { normalizeGradeRange } from '../domain/grades.js';
 
 const STORAGE_KEY = 'qistas:v1';
 const WORKSPACE_KEY = 'qistas:workspace:v1';
@@ -61,6 +62,7 @@ export function normalizeAppData(data, fallback) {
   return {
     ...clone(fallback),
     ...source,
+    gradeRange: normalizeGradeRange(source.gradeRange, requirements, fallback.gradeRange || { start: 1, end: 12 }),
     settings: {
       teacherMaxLoad: Number(sourceSettings.teacherMaxLoad) || 18,
       leadMaxLoad: Number(sourceSettings.leadMaxLoad) || 12,

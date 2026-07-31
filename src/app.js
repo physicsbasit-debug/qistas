@@ -28,6 +28,14 @@ import {
 } from './services/storage.js';
 import { printScenarioReport } from './services/export.js';
 import { exportScenarioExcel } from './services/excelExport.js';
+import {
+  compareGrades,
+  gradeLabel,
+  gradeNumber,
+  gradeRangeLabel,
+  gradesInRange,
+  normalizeGradeRange,
+} from './domain/grades.js';
 
 const app = document.querySelector('#app');
 const MODEL_BATCH_SIZE = 20;
@@ -72,6 +80,40 @@ const totalSections = () => state.data.requirements.reduce(
 const selected = () => state.scenarios.find((scenario) => scenario.id === state.selectedId)
   || state.scenarios[0];
 
+const activeGradeRange = () => normalizeGradeRange(
+  state.data.gradeRange,
+  state.data.requirements,
+  { start: 1, end: 12 },
+);
+const gradeOptions = (selectedGrade = '') => {
+  const available = gradesInRange(activeGradeRange());
+  const selectedNumber = gradeNumber(selectedGrade);
+  const options = [...available];
+  if (Number.isFinite(selectedNumber) && !options.some((grade) => grade.number === selectedNumber)) {
+    options.push({ number: selectedNumber, label: gradeLabel(selectedNumber) || selectedGrade });
+    options.sort((a, b) => a.number - b.number);
+  }
+  return options.map((grade) => `
+    <option value="${esc(grade.label)}" ${grade.label === selectedGrade ? 'selected' : ''}>
+      الصف ${esc(grade.label)}
+    </option>`).join('');
+};
+const outOfRangeRequirements = () => {
+  const range = activeGradeRange();
+  return state.data.requirements.filter((requirement) => {
+    const number = gradeNumber(requirement.grade);
+    return Number.isFinite(number) && (number < range.start || number > range.end);
+  });
+};
+const nextRequirementGrade = () => {
+  const last = state.data.requirements.at(-1)?.grade;
+  const lastNumber = gradeNumber(last);
+  const range = activeGradeRange();
+  return Number.isFinite(lastNumber) && lastNumber >= range.start && lastNumber <= range.end
+    ? gradeLabel(lastNumber)
+    : gradeLabel(range.start);
+};
+
 function invalidateResults() {
   state.scenarios = [];
   state.errors = [];
@@ -109,6 +151,14 @@ function updateData(path, value) {
   const [kind, id, field] = path.split(':');
 
   if (kind === 'root') state.data[field] = value;
+
+  if (kind === 'gradeRange') {
+    const range = activeGradeRange();
+    range[field] = Number(value);
+    if (field === 'start' && range.start > range.end) range.end = range.start;
+    if (field === 'end' && range.end < range.start) range.start = range.end;
+    state.data.gradeRange = normalizeGradeRange(range, state.data.requirements, { start: 1, end: 12 });
+  }
 
   if (kind === 'settings') {
     state.data.settings[field] = Number(value);
@@ -199,6 +249,38 @@ function setupPanel() {
         <label>السنة الدراسية
           <input data-path="root::academicYear" value="${esc(state.data.academicYear || '')}" placeholder="2026/2027">
         </label>
+      </div>
+
+      <div class="grade-range-card">
+        <div class="grade-range-copy">
+          <span class="range-icon" aria-hidden="true">١٢</span>
+          <div>
+            <strong>الصفوف التي تخدمها المدرسة</strong>
+            <p class="muted">اختر نطاق المدرسة مرة واحدة. يدعم قِسطاس جميع الصفوف من الأول إلى الثاني عشر.</p>
+          </div>
+        </div>
+        <div class="grade-range-fields">
+          <label>من الصف
+            <select data-path="gradeRange::start">
+              ${Array.from({ length: 12 }, (_, index) => index + 1).map((number) => `<option value="${number}" ${activeGradeRange().start === number ? 'selected' : ''}>${esc(gradeLabel(number))}</option>`).join('')}
+            </select>
+          </label>
+          <label>إلى الصف
+            <select data-path="gradeRange::end">
+              ${Array.from({ length: 12 }, (_, index) => index + 1).map((number) => `<option value="${number}" ${activeGradeRange().end === number ? 'selected' : ''}>${esc(gradeLabel(number))}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        <div class="grade-presets" aria-label="نطاقات جاهزة">
+          ${[
+            [1, 4, '1-4'],
+            [5, 8, '5-8'],
+            [8, 10, '8-10'],
+            [9, 12, '9-12'],
+            [1, 12, '1-12'],
+          ].map(([start, end, label]) => `<button class="range-preset ${activeGradeRange().start === start && activeGradeRange().end === end ? 'active' : ''}" data-action="set-grade-range" data-start="${start}" data-end="${end}">${label}</button>`).join('')}
+        </div>
+        <div class="grade-range-summary"><span>النطاق الحالي</span><strong>${esc(gradeRangeLabel(activeGradeRange()))}</strong></div>
       </div>
 
       <div class="simple-settings">
@@ -374,7 +456,7 @@ function requirementsPanel() {
           <div>
             <p class="eyebrow">الخطوة الثالثة</p>
             <h2>الصفوف والمواد</h2>
-            <p class="muted">أدخل عدد الشعب والحصص، وستتحدث الإجماليات فورًا.</p>
+            <p class="muted">اختر أي صف من نطاق مدرستك، من الأول حتى الثاني عشر، ثم أدخل المادة وعدد الشعب والحصص.</p>
           </div>
         </div>
         <button class="button secondary" data-action="add-req"><span aria-hidden="true">＋</span> إضافة صف ومادة</button>
@@ -385,7 +467,7 @@ function requirementsPanel() {
           <tbody>
             ${state.data.requirements.map((requirement) => `
               <tr>
-                <td data-label="الصف"><input data-path="req:${requirement.id}:grade" value="${esc(requirement.grade)}"></td>
+                <td data-label="الصف"><select data-path="req:${requirement.id}:grade">${gradeOptions(requirement.grade)}</select></td>
                 <td data-label="المادة"><input data-path="req:${requirement.id}:subject" value="${esc(requirement.subject)}"></td>
                 <td data-label="عدد الشعب"><input class="number" type="number" min="1" data-path="req:${requirement.id}:sections" value="${requirement.sections}"></td>
                 <td data-label="حصص الشعبة"><input class="number" type="number" min="1" data-path="req:${requirement.id}:periodsPerSection" value="${requirement.periodsPerSection}"></td>
@@ -395,7 +477,8 @@ function requirementsPanel() {
           </tbody>
         </table>
       </div>
-      <div class="note">بعد تغيير الصفوف أو المواد، راجع المعلمين الذين اخترت لهم صفًا أو مادة محددين.</div>
+      ${outOfRangeRequirements().length ? `<div class="alert warning">يوجد ${outOfRangeRequirements().length} مقرر خارج نطاق المدرسة الحالي. وسّع النطاق أو عدّل الصف قبل التوزيع.</div>` : ''}
+      <div class="note">النطاق يسهّل الاختيار فقط ولا يحذف بياناتك. بعد تغيير الصفوف أو المواد، راجع المعلمين الذين اخترت لهم صفًا أو مادة محددين.</div>
     </section>`;
 }
 
@@ -644,7 +727,7 @@ function draftPanel() {
     if (!teacher) return '';
     const locked = lockedTeachers.has(teacher.id);
     const sortedAssignments = [...summaryItem.assignments].sort((a, b) => (
-      a.grade.localeCompare(b.grade, 'ar')
+      compareGrades(a.grade, b.grade)
       || a.subject.localeCompare(b.subject, 'ar')
       || a.section - b.section
     ));
@@ -720,7 +803,7 @@ function modelResultsPanel() {
     const teacher = state.data.teachers.find((item) => item.id === summaryItem.teacherId);
     if (!teacher) return '';
     const sortedAssignments = [...summaryItem.assignments].sort((a, b) => (
-      a.grade.localeCompare(b.grade, 'ar')
+      compareGrades(a.grade, b.grade)
       || a.subject.localeCompare(b.subject, 'ar')
       || a.section - b.section
     ));
@@ -967,10 +1050,10 @@ function render() {
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 0.9.0 · واجهة أكثر هدوءًا ووضوحًا</span>
+            <span class="status-pill">الإصدار 1.0.0 · يدعم المدارس من الصف الأول إلى الثاني عشر</span>
             <h1>وزّع الأنصبة بثقة،<br><em>من دون زحمة.</em></h1>
-            <p>أدخل بياناتك في أربع خطوات واضحة، ثم اختر من نماذج توزيع صحيحة ومتوازنة.</p>
-            <div class="hero-features"><span>✓ يعمل محليًا</span><span>✓ نماذج متعددة</span><span>✓ حفظ تلقائي</span></div>
+            <p>أدخل بيانات أي مدرسة من الصف الأول إلى الثاني عشر في أربع خطوات واضحة، ثم اختر من نماذج توزيع صحيحة ومتوازنة.</p>
+            <div class="hero-features"><span>✓ الصفوف 1-12</span><span>✓ نماذج متعددة</span><span>✓ حفظ تلقائي</span></div>
           </div>
           <div class="intro-stat">
             <span>الحصص المطلوبة</span>
@@ -1127,10 +1210,19 @@ app.addEventListener('click', async (event) => {
     persistRender();
   }
 
+  if (action === 'set-grade-range') {
+    state.data.gradeRange = normalizeGradeRange({
+      start: Number(button.dataset.start),
+      end: Number(button.dataset.end),
+    }, state.data.requirements, { start: 1, end: 12 });
+    invalidateResults();
+    persistRender();
+  }
+
   if (action === 'add-req') {
     state.data.requirements.push({
       id: uid(),
-      grade: '',
+      grade: nextRequirementGrade(),
       subject: '',
       sections: 1,
       periodsPerSection: 1,
@@ -1259,6 +1351,10 @@ async function generate(more = false) {
     state.data.requirements,
     state.data.settings,
   );
+  const outsideRange = outOfRangeRequirements();
+  if (outsideRange.length) {
+    state.errors.push(`يوجد ${outsideRange.length} مقرر خارج نطاق صفوف المدرسة الحالي. عدّل الصف أو وسّع النطاق أولًا.`);
+  }
 
   if (state.errors.length) {
     render();

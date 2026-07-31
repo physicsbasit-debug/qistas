@@ -1211,3 +1211,90 @@ tbody tr:hover { background: #f9fcfb; }
   .step-3 .intro-stat { width: 100%; min-width: 0; }
   .footer-nav { position: sticky; bottom: 6px; }
 }
+
+/* v1.0: school coverage from grade 1 to grade 12 */
+.grade-range-card {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.25fr) minmax(260px, .9fr);
+  gap: 16px 22px;
+  align-items: center;
+  padding: 18px;
+  border: 1px solid #cfe5e1;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #f8fcfb, #eef8f5);
+}
+.grade-range-copy {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+.grade-range-copy strong { display: block; color: #173c39; }
+.grade-range-copy p { margin: 4px 0 0; }
+.range-icon {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 15px;
+  background: #0f766e;
+  color: #fff;
+  font-size: 17px;
+  font-weight: 900;
+  box-shadow: 0 9px 22px rgba(15, 118, 110, .18);
+}
+.grade-range-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.grade-range-fields label {
+  padding: 10px;
+  border: 1px solid #dbe9e6;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, .9);
+}
+.grade-range-fields select { min-height: 42px; background: #fff; }
+.grade-presets {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+}
+.range-preset {
+  min-width: 58px;
+  border: 1px solid #cddfdc;
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: #fff;
+  color: #45615e;
+  font-size: 12px;
+  font-weight: 800;
+}
+.range-preset:hover,
+.range-preset.active {
+  border-color: #78bdb1;
+  background: #dff3ee;
+  color: #0a6256;
+}
+.grade-range-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  grid-column: 1 / -1;
+  padding-top: 12px;
+  border-top: 1px solid rgba(145, 188, 181, .32);
+}
+.grade-range-summary span { color: var(--muted); font-size: 12px; }
+.grade-range-summary strong { color: var(--primary-dark); font-size: 13px; }
+
+@media (max-width: 760px) {
+  .grade-range-card { grid-template-columns: 1fr; }
+  .grade-range-fields { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 480px) {
+  .grade-range-fields { grid-template-columns: 1fr; }
+  .grade-range-summary { align-items: flex-start; flex-direction: column; }
+}

@@ -1,3 +1,5 @@
+import { compareGrades } from '../domain/grades.js';
+
 function escapeHtml(value = '') {
   return String(value).replace(
     /[&<>'"]/g,
@@ -68,7 +70,7 @@ export function groupTeacherAssignments(assignments = []) {
   });
 
   return [...groups.values()].sort((a, b) => (
-    String(a.grade).localeCompare(String(b.grade), 'ar')
+    compareGrades(a.grade, b.grade)
     || String(a.subject).localeCompare(String(b.subject), 'ar')
   ));
 }

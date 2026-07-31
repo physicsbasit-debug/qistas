@@ -26,6 +26,7 @@ export const seedData = {
   schoolName: 'المدرسة النموذجية',
   departmentName: 'قسم العلوم',
   academicYear: defaultAcademicYear(),
+  gradeRange: { start: 1, end: 12 },
   settings: {
     teacherMaxLoad: 18,
     leadMaxLoad: 12,

@@ -1,3 +1,5 @@
+import { compareGrades } from '../domain/grades.js';
+
 import { formatSectionRanges, groupTeacherAssignments } from './export.js';
 
 const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -185,7 +187,7 @@ function detailExportRows(scenario, data) {
   const teacherMap = new Map(activeTeachers(data).map((teacher) => [teacher.id, teacher]));
   return [...(scenario.assignments || [])]
     .sort((a, b) => (
-      String(a.grade).localeCompare(String(b.grade), 'ar')
+      compareGrades(a.grade, b.grade)
       || String(a.subject).localeCompare(String(b.subject), 'ar')
       || Number(a.section) - Number(b.section)
     ))
