@@ -15,7 +15,6 @@ import {
 } from './engine/distribution.js';
 import { clearAppData, clone, loadAppData, saveAppData } from './services/storage.js';
 import { exportScenarioCsv } from './services/export.js';
-import { requestGeminiReview } from './services/geminiReview.js';
 
 const app = document.querySelector('#app');
 const MODEL_BATCH_SIZE = 20;
@@ -27,9 +26,6 @@ let state = {
   scenarios: [],
   selectedId: 'balanced',
   errors: [],
-  gemini: null,
-  geminiError: '',
-  geminiLoading: false,
   notice: '',
   generating: false,
   generationRound: 0,
@@ -62,8 +58,6 @@ const selected = () => state.scenarios.find((scenario) => scenario.id === state.
 function invalidateResults() {
   state.scenarios = [];
   state.errors = [];
-  state.gemini = null;
-  state.geminiError = '';
   state.generationRound = 0;
   state.searchStats = { attempts: 0, uniqueFound: 0, completeFound: 0 };
 }
@@ -182,7 +176,7 @@ function setupPanel() {
         <article class="kpi"><span>إجمالي الحصص</span><strong>${totalPeriods()}</strong></article>
       </div>
 
-      <div class="note">البيانات محفوظة محليًا في هذا المتصفح. لا يُرسل شيء إلى Gemini إلا عند طلب المراجعة الذكية.</div>
+      <div class="note">البيانات ومحركات التوزيع تعمل محليًا داخل المتصفح، دون حساب خارجي أو اتصال سحابي.</div>
     </section>`;
 }
 
@@ -469,18 +463,6 @@ function resultsPanel() {
       ${modelComparison()}
     </div>` : '';
 
-  const geminiReview = state.gemini ? `
-    <div class="ai-review">
-      <h3>${esc(state.gemini.summary)}</h3>
-      <div class="review-columns">
-        ${[
-    ['نقاط القوة', state.gemini.strengths],
-    ['تنبيهات', state.gemini.warnings],
-    ['إجراءات مقترحة', state.gemini.suggestedActions],
-  ].map(([heading, items]) => `<div><strong>${heading}</strong><ul>${(items || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul></div>`).join('')}
-      </div>
-    </div>` : '';
-
   const searchMessage = state.scenarios.length
     ? `<div class="models-found"><strong>عثر قِسطاس على ${state.scenarios.length} نموذجًا مختلفًا${state.searchStats.completeFound ? ' ومكتملًا' : ''}.</strong><span>تم فحص ${state.searchStats.attempts} محاولة توزيع، مع حذف النتائج المكررة تلقائيًا.</span></div>`
     : '';
@@ -500,21 +482,6 @@ function resultsPanel() {
       ${searchMessage}
       ${result}
 
-      ${state.scenarios.length ? `
-        <details class="panel ai-panel no-print">
-          <summary>مراجعة Gemini الاختيارية</summary>
-          <p class="muted top-gap">يراجع Gemini أفضل 12 نموذجًا فقط حتى تبقى المراجعة سريعة وواضحة، ولا يغير الحساب أو القيود.</p>
-          <div class="form-grid two top-gap">
-            <label>رابط Supabase<input id="supabase-url" value="${esc(localStorage.getItem('qistas:supabase-url') || '')}"></label>
-            <label>مفتاح Supabase anon<input id="supabase-key" type="password" value="${esc(localStorage.getItem('qistas:supabase-anon-key') || '')}"></label>
-          </div>
-          <div class="actions top-gap">
-            <button class="button secondary" data-action="save-ai-settings">حفظ الاتصال</button>
-            <button class="button ai" data-action="gemini" ${state.geminiLoading ? 'disabled' : ''}>${state.geminiLoading ? 'جارٍ التحليل…' : 'رشّح أفضل نموذج'}</button>
-          </div>
-          ${state.geminiError ? `<div class="alert error top-gap">${esc(state.geminiError)}</div>` : ''}
-          ${geminiReview}
-        </details>` : ''}
     </section>`;
 }
 
@@ -530,7 +497,7 @@ function render() {
       <main>
         <section class="intro">
           <div>
-            <span class="status-pill">الإصدار 0.5 · نماذج متعددة ذكية</span>
+            <span class="status-pill">الإصدار 0.5.1 · محرك محلي مستقر</span>
             <h1>حدّد من يدرّس ماذا.<br>وقِسطاس يوزّع الباقي.</h1>
             <p>حدّد نطاق كل معلم فقط. قِسطاس يبحث عن نماذج صحيحة ومتنوعة، ثم يعرضها مرتبة لتختار الأنسب.</p>
           </div>
@@ -636,9 +603,6 @@ app.addEventListener('click', async (event) => {
       scenarios: [],
       selectedId: 'balanced',
       errors: [],
-      gemini: null,
-      geminiError: '',
-      geminiLoading: false,
       notice: '',
       generating: false,
       generationRound: 0,
@@ -718,28 +682,6 @@ app.addEventListener('click', async (event) => {
   if (action === 'export' && selected()) exportScenarioCsv(selected(), state.data.teachers);
   if (action === 'print') window.print();
 
-  if (action === 'save-ai-settings') {
-    localStorage.setItem('qistas:supabase-url', document.querySelector('#supabase-url').value.trim());
-    localStorage.setItem('qistas:supabase-anon-key', document.querySelector('#supabase-key').value.trim());
-    button.textContent = 'تم الحفظ';
-  }
-
-  if (action === 'gemini') {
-    state.geminiLoading = true;
-    state.geminiError = '';
-    render();
-    try {
-      state.gemini = await requestGeminiReview(state.data, state.scenarios);
-      if (state.scenarios.some((scenario) => scenario.id === state.gemini.recommendedScenario)) {
-        state.selectedId = state.gemini.recommendedScenario;
-      }
-    } catch (error) {
-      state.geminiError = error instanceof Error ? error.message : 'تعذرت المراجعة.';
-    } finally {
-      state.geminiLoading = false;
-      render();
-    }
-  }
 });
 
 async function generate(more = false) {
@@ -748,8 +690,6 @@ async function generate(more = false) {
     state.data.requirements,
     state.data.settings,
   );
-  state.gemini = null;
-  state.geminiError = '';
 
   if (state.errors.length) {
     render();

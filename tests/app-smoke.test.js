@@ -25,7 +25,8 @@ test('app renders simplified controls and multiple-model results without browser
   await import(`../src/app.js?smoke=${Date.now()}`);
   assert.match(appRoot.innerHTML, /قِسطاس/);
   assert.match(appRoot.innerHTML, /سقف الأنصبة/);
-  assert.match(appRoot.innerHTML, /الإصدار 0\.5/);
+  assert.doesNotMatch(appRoot.innerHTML, /Gemini|Supabase/);
+  assert.match(appRoot.innerHTML, /الإصدار 0\.5\.1/);
 
   const click = listeners.get('click');
   await click({
