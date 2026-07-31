@@ -6,6 +6,7 @@ import {
   inferPlanScope,
   PLAN_SCOPE_MODE,
   requirementBelongsToScope,
+  planScopePlanName,
 } from '../src/domain/planScope.js';
 
 test('legacy science data is inferred as a multi-subject science plan', () => {
@@ -50,4 +51,10 @@ test('department scope includes only explicitly selected subjects', () => {
   assert.equal(rows.some((row) => row.subject === 'الكيمياء'), false);
   assert.equal(rows.some((row) => row.subject === 'الأحياء'), false);
   assert.ok(rows.every((row) => requirementBelongsToScope(row, scope)));
+});
+
+
+test('plan names are derived automatically from the active subject or department', () => {
+  assert.equal(planScopePlanName({ mode: PLAN_SCOPE_MODE.SINGLE, subjectId: 'arabic' }), 'توزيع أنصبة مادة اللغة العربية');
+  assert.equal(planScopePlanName({ mode: PLAN_SCOPE_MODE.DEPARTMENT, templateId: 'science' }), 'توزيع أنصبة قسم العلوم');
 });

@@ -969,6 +969,7 @@ export function rankDistributionModels(candidates, limit = 20) {
   const selected = [];
   const winnerSignatures = [...new Set(Object.values(winners))];
   for (const signature of winnerSignatures) {
+    if (selected.length >= limit) break;
     const model = ordered.find((item) => item.signature === signature);
     if (model && !selected.some((item) => item.signature === signature)) selected.push(model);
   }

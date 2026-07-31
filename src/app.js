@@ -36,6 +36,7 @@ import {
   normalizePlanScope,
   PLAN_SCOPE_MODE,
   planScopeLabel,
+  planScopePlanName,
   planScopeSubjects,
   requirementBelongsToScope,
   scopeSignature,
@@ -53,19 +54,17 @@ import {
   DEPARTMENT_TEMPLATES,
   SUBJECT_CATALOG,
   recommendedPeriods,
-  SCHOOL_SHIFT,
   subjectByLabel,
   templateById,
 } from './domain/subjects.js';
 
 const app = document.querySelector('#app');
-const INITIAL_MODEL_BATCH_SIZE = 8;
-const ADDITIONAL_MODEL_BATCH_SIZE = 20;
-const INITIAL_SEARCH_ATTEMPTS = 36;
-const ADDITIONAL_SEARCH_ATTEMPTS = 100;
+const INITIAL_SEARCH_ATTEMPTS = 8;
+const ALTERNATIVE_SEARCH_ATTEMPTS = 12;
+const ALTERNATIVE_SEARCH_WAVES = 3;
 const REBALANCE_MODEL_LIMIT = 8;
 const REBALANCE_SEARCH_ATTEMPTS = 72;
-const MAX_DISPLAY_MODELS = 100;
+const MAX_DISPLAY_MODELS = 30;
 
 const storedWorkspace = loadWorkspace();
 const initialData = loadAppData(seedData);
@@ -164,7 +163,7 @@ const requirementsOutsideScope = () => state.data.requirements.filter(
 function savePlanSnapshot(data = state.data) {
   const snapshot = {
     id: String(data.planId || uid()),
-    name: String(data.planName || data.departmentName || 'خطة توزيع'),
+    name: planScopePlanName(data.planScope),
     updatedAt: new Date().toISOString(),
     data: clone(data),
   };
@@ -179,7 +178,7 @@ function savePlanSnapshot(data = state.data) {
 }
 
 function planDefaultName(scope = state.data.planScope) {
-  return `${planScopeLabel(scope)} ${gradeRangeLabel(activeGradeRange())}`.trim();
+  return planScopePlanName(scope);
 }
 
 function normalizedSubjectToken(value = '') {
@@ -267,7 +266,7 @@ function applyPlanConfiguration() {
   const requirements = buildRequirementsForScope(
     pending,
     activeGradeRange(),
-    state.data.settings.schoolShift,
+    undefined,
     scopeChanged ? [] : state.data.requirements,
   );
   const teachers = buildTeachersForScope(
@@ -279,9 +278,7 @@ function applyPlanConfiguration() {
       preserveNames: !scopeChanged,
     },
   );
-  const planName = scopeChanged || !state.data.planName
-    ? planDefaultName(pending)
-    : state.data.planName;
+  const planName = planDefaultName(pending);
 
   state.data = {
     ...state.data,
@@ -328,7 +325,7 @@ function createNewPlan() {
   state.data = normalizeAppData({
     ...base,
     planId: uid(),
-    planName: 'خطة جديدة',
+    planName: planScopePlanName({ mode: PLAN_SCOPE_MODE.SINGLE, subjectId: 'arabic' }),
     schoolName: state.data.schoolName,
     academicYear: state.data.academicYear,
     gradeRange: range,
@@ -407,9 +404,7 @@ function updateData(path, value) {
   }
 
   if (kind === 'settings') {
-    state.data.settings[field] = field === 'schoolShift'
-      ? String(value || SCHOOL_SHIFT.SINGLE)
-      : Number(value);
+    state.data.settings[field] = Number(value);
   }
 
   if (kind === 'teacher') {
@@ -441,14 +436,12 @@ function updateData(path, value) {
       requirement.periodsPerSection = recommendedPeriods(
         requirement.grade,
         requirement.subject,
-        state.data.settings.schoolShift,
       );
     }
     if (field === 'subject' && subjectByLabel(value)) {
       requirement.periodsPerSection = recommendedPeriods(
         requirement.grade,
         value,
-        state.data.settings.schoolShift,
       );
     }
   }
@@ -507,7 +500,7 @@ function planLibraryPanel() {
     <div class="plan-library-bar">
       <div class="current-plan-copy">
         <span class="plan-dot" aria-hidden="true"></span>
-        <div><small>الخطة الحالية</small><strong>${esc(state.data.planName || state.data.departmentName || 'خطة توزيع')}</strong></div>
+        <div><small>الخطة الحالية</small><strong>${esc(planDefaultName())}</strong></div>
       </div>
       <div class="plan-library-actions">
         <label class="saved-plan-select">الخطط المحفوظة
@@ -651,16 +644,17 @@ function setupPanel() {
       ${planLibraryPanel()}
       ${state.notice ? `<div class="alert ${state.noticeType === 'error' ? 'error' : state.noticeType === 'warning' ? 'warning' : 'success'}">${esc(state.notice)}</div>` : ''}
 
-      <div class="form-grid three">
+      <div class="form-grid two">
         <label>اسم المدرسة
           <input data-path="root::schoolName" value="${esc(state.data.schoolName)}">
-        </label>
-        <label>اسم الخطة
-          <input data-path="root::planName" value="${esc(state.data.planName || '')}" placeholder="مثل: خطة اللغة العربية 5-8">
         </label>
         <label>السنة الدراسية
           <input data-path="root::academicYear" value="${esc(state.data.academicYear || '')}" placeholder="2026/2027">
         </label>
+      </div>
+      <div class="auto-plan-name">
+        <span>اسم الخطة تلقائيًا</span>
+        <strong>${esc(planDefaultName(normalizedPendingScope()))}</strong>
       </div>
 
       <div class="grade-range-card">
@@ -678,9 +672,8 @@ function setupPanel() {
         <div class="grade-range-summary"><span>النطاق الحالي</span><strong>${esc(gradeRangeLabel(activeGradeRange()))}</strong></div>
       </div>
 
-      <div class="simple-settings curriculum-settings">
-        <div><strong>إعدادات المدرسة</strong><p class="muted">إعدادات عامة تطبق على الخطة الحالية.</p></div>
-        <label>نظام الدوام<select data-path="settings::schoolShift"><option value="single" ${state.data.settings.schoolShift === SCHOOL_SHIFT.SINGLE ? 'selected' : ''}>فترة واحدة</option><option value="double" ${state.data.settings.schoolShift === SCHOOL_SHIFT.DOUBLE ? 'selected' : ''}>فترتان</option></select></label>
+      <div class="simple-settings curriculum-settings compact-settings">
+        <div><strong>سقف الأنصبة</strong><p class="muted">حدّد السقف مرة واحدة، ثم يتولى قِسطاس الموازنة.</p></div>
         <label>سقف المعلم<input type="number" min="1" data-path="settings::teacherMaxLoad" value="${state.data.settings.teacherMaxLoad}"></label>
         <label>سقف المعلم الأول<input type="number" min="1" data-path="settings::leadMaxLoad" value="${state.data.settings.leadMaxLoad}"></label>
       </div>
@@ -866,7 +859,7 @@ function modelNavigator(scenario) {
         <button class="button secondary" data-action="prev-model" ${currentIndex === 0 ? 'disabled' : ''}>السابق</button>
         <button class="button secondary" data-action="next-model" ${currentIndex >= state.scenarios.length - 1 ? 'disabled' : ''}>التالي</button>
         <button class="button primary" data-action="generate-more" ${!canGenerateMore || state.generating ? 'disabled' : ''}>
-          ${state.generating ? 'جارٍ البحث…' : 'نماذج إضافية'}
+          ${state.generating ? 'جارٍ إنشاء بديل…' : 'نموذج بديل'}
         </button>
       </div>
     </div>`;
@@ -1186,11 +1179,15 @@ function modelResultsPanel() {
     </div>` : '';
 
   const modelCount = state.scenarios.length;
-  const modelCountText = modelCount >= 3 && modelCount <= 10
-    ? `${modelCount} نماذج مختلفة${state.searchStats?.completeFound ? ' ومكتملة' : ''}`
-    : `${modelCount} نموذجًا مختلفًا${state.searchStats?.completeFound ? ' ومكتملًا' : ''}`;
+  const modelCountText = modelCount === 1
+    ? `نموذج واحد مختلف${state.searchStats?.completeFound ? ' ومكتمل' : ''}`
+    : modelCount === 2
+      ? `نموذجين مختلفين${state.searchStats?.completeFound ? ' ومكتملين' : ''}`
+      : modelCount >= 3 && modelCount <= 10
+        ? `${modelCount} نماذج مختلفة${state.searchStats?.completeFound ? ' ومكتملة' : ''}`
+        : `${modelCount} نموذجًا مختلفًا${state.searchStats?.completeFound ? ' ومكتملًا' : ''}`;
   const searchMessage = modelCount
-    ? `<div class="models-found"><strong>عثر قِسطاس على ${modelCountText}.</strong><span>تم فحص ${state.searchStats.attempts} محاولة توزيع، مع حذف النتائج المكررة تلقائيًا.</span></div>`
+    ? `<div class="models-found"><strong>عثر قِسطاس على ${modelCountText}.</strong><span>تُحفظ البدائل التي طلبتها، ويمنع قِسطاس تكرار النموذج نفسه.</span></div>`
     : '';
 
   return `
@@ -1201,12 +1198,12 @@ function modelResultsPanel() {
           <div>
             <p class="eyebrow">الخطوة الثالثة</p>
             <h2>نماذج التوزيع</h2>
-            <p class="muted">يعرض أفضل النماذج سريعًا، ويمكنك توسيع البحث عند الحاجة.</p>
+            <p class="muted">يعرض أفضل توزيع أولًا. اطلب بديلًا جديدًا فقط عندما تحتاجه.</p>
           </div>
         </div>
         <div class="actions no-print">
           ${state.draft ? '<button class="button secondary" data-action="view-draft">فتح الخطة قيد التعديل</button>' : ''}
-          <button class="button primary" data-action="generate" ${state.generating ? 'disabled' : ''}>${state.generating ? 'جارٍ البحث عن النماذج…' : '✦ ولّد نماذج التوزيع'}</button>
+          <button class="button primary" data-action="generate" ${state.generating ? 'disabled' : ''}>${state.generating ? 'جارٍ إنشاء التوزيع…' : '✦ أنشئ التوزيع'}</button>
         </div>
       </div>
 
@@ -1417,10 +1414,10 @@ function render() {
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.2.1 · تهيئة أبسط وتوليد أسرع</span>
+            <span class="status-pill">الإصدار 1.2.2 · توزيع أول ثم بدائل عند الطلب</span>
             <h1>وزّع الأنصبة بثقة،<br><em>من دون زحمة.</em></h1>
-            <p>اختر المادة أو القسم مرة واحدة، وهيّئ المعلمين والشعب، ثم اختر من نماذج توزيع صحيحة ومتوازنة.</p>
-            <div class="hero-features"><span>✓ جميع المواد</span><span>✓ الصفوف 1-12</span><span>✓ نماذج متعددة</span></div>
+            <p>اختر المادة أو القسم مرة واحدة، وهيّئ المعلمين والشعب، ثم أنشئ أفضل توزيع واطلب بديلًا عند الحاجة.</p>
+            <div class="hero-features"><span>✓ جميع المواد</span><span>✓ الصفوف 1-12</span><span>✓ بدائل عند الطلب</span></div>
           </div>
           <div class="intro-stat">
             <span>الحصص المطلوبة</span>
@@ -1438,7 +1435,7 @@ function render() {
           <div class="footer-progress"><span>الخطوة ${state.step + 1} من 3</span><strong>${steps[state.step]}</strong></div>
           <div class="footer-actions">
             <button class="button secondary" data-action="prev" ${state.step === 0 ? 'disabled' : ''}><span aria-hidden="true">→</span> السابق</button>
-            <button class="button primary" data-action="next">${state.step < 2 ? 'التالي <span aria-hidden="true">←</span>' : state.resultView === 'draft' && state.draft ? 'اعتماد الخطة' : '✦ ولّد نماذج التوزيع'}</button>
+            <button class="button primary" data-action="next">${state.step < 2 ? 'التالي <span aria-hidden="true">←</span>' : state.resultView === 'draft' && state.draft ? 'اعتماد الخطة' : '✦ أنشئ التوزيع'}</button>
           </div>
         </div>
       </main>
@@ -1703,7 +1700,7 @@ app.addEventListener('click', async (event) => {
         grade,
         subject: firstSubject,
         sections: 1,
-        periodsPerSection: recommendedPeriods(grade, firstSubject, state.data.settings.schoolShift),
+        periodsPerSection: recommendedPeriods(grade, firstSubject),
       });
       invalidateResults();
       persistRender();
@@ -1852,40 +1849,87 @@ async function generate(more = false) {
   }
 
   state.generating = true;
+  state.notice = '';
   render();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await new Promise((resolve) => setTimeout(resolve, 10));
 
   try {
-    const excludeSignatures = more ? state.scenarios.map((scenario) => scenario.signature) : [];
-    const result = generateDistributionModels(
-      state.data.teachers,
-      state.data.requirements,
-      state.data.settings,
-      {
-        limit: more ? ADDITIONAL_MODEL_BATCH_SIZE : INITIAL_MODEL_BATCH_SIZE,
-        attempts: more ? ADDITIONAL_SEARCH_ATTEMPTS : INITIAL_SEARCH_ATTEMPTS,
-        seedOffset: more ? state.generationRound + 1 : 0,
-        excludeSignatures,
-      },
-    );
+    if (!more) {
+      const result = generateDistributionModels(
+        state.data.teachers,
+        state.data.requirements,
+        state.data.settings,
+        {
+          limit: 1,
+          attempts: INITIAL_SEARCH_ATTEMPTS,
+          seedOffset: 0,
+        },
+      );
+      state.scenarios = result.models;
+      state.generationRound = 0;
+      state.searchStats = {
+        attempts: result.attempts,
+        uniqueFound: state.scenarios.length,
+        completeFound: state.scenarios.filter(
+          (scenario) => scenario.unassigned.length === 0 && scenario.overloadCount === 0,
+        ).length,
+      };
+      state.selectedId = state.scenarios[0]?.id || '';
+      state.notice = state.scenarios.length
+        ? ''
+        : 'لم يتمكن قِسطاس من إنشاء توزيع ضمن القيود الحالية.';
+      return;
+    }
 
-    const previousSelectedId = state.selectedId;
-    const combined = more ? [...state.scenarios, ...result.models] : result.models;
-    state.scenarios = rankDistributionModels(combined, MAX_DISPLAY_MODELS);
-    state.generationRound = more ? state.generationRound + 1 : 0;
-    state.searchStats = {
-      attempts: (more ? state.searchStats.attempts : 0) + result.attempts,
-      uniqueFound: state.scenarios.length,
-      completeFound: state.scenarios.filter(
-        (scenario) => scenario.unassigned.length === 0 && scenario.overloadCount === 0,
-      ).length,
-    };
-    state.selectedId = more && state.scenarios.some((scenario) => scenario.id === previousSelectedId)
-      ? previousSelectedId
-      : state.scenarios[0]?.id || '';
-    state.notice = more && !result.models.length
-      ? 'لم يعثر البحث الإضافي على نموذج جديد مختلف.'
-      : '';
+    const excluded = state.scenarios.map((scenario) => scenario.signature);
+    let foundModel = null;
+    let attemptsUsed = 0;
+    let nextRound = state.generationRound;
+
+    for (let wave = 0; wave < ALTERNATIVE_SEARCH_WAVES && !foundModel; wave += 1) {
+      nextRound += 1;
+      const result = generateDistributionModels(
+        state.data.teachers,
+        state.data.requirements,
+        state.data.settings,
+        {
+          limit: 1,
+          attempts: ALTERNATIVE_SEARCH_ATTEMPTS,
+          seedOffset: nextRound,
+          excludeSignatures: excluded,
+        },
+      );
+      attemptsUsed += result.attempts;
+      foundModel = result.models[0] || null;
+      if (!foundModel && wave < ALTERNATIVE_SEARCH_WAVES - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+
+    state.generationRound = nextRound;
+    state.searchStats.attempts += attemptsUsed;
+
+    if (!foundModel) {
+      state.notice = 'لم يتم العثور على توزيع جديد مختلف ضمن القيود الحالية.';
+      state.noticeType = 'warning';
+      return;
+    }
+
+    const newSignature = foundModel.signature;
+    state.scenarios = rankDistributionModels(
+      [...state.scenarios, foundModel],
+      MAX_DISPLAY_MODELS,
+    );
+    const selectedAlternative = state.scenarios.find(
+      (scenario) => scenario.signature === newSignature,
+    );
+    state.selectedId = selectedAlternative?.id || state.scenarios.at(-1)?.id || '';
+    state.searchStats.uniqueFound = state.scenarios.length;
+    state.searchStats.completeFound = state.scenarios.filter(
+      (scenario) => scenario.unassigned.length === 0 && scenario.overloadCount === 0,
+    ).length;
+    state.notice = `تم إنشاء نموذج بديل مختلف وحفظه مع النماذج السابقة.`;
+    state.noticeType = 'success';
   } finally {
     state.generating = false;
     render();

@@ -5,7 +5,7 @@ import {
   POLICY_MODES,
 } from '../domain/assignmentPolicy.js';
 import { normalizeGradeRange } from '../domain/grades.js';
-import { normalizePlanScope } from '../domain/planScope.js';
+import { normalizePlanScope, planScopePlanName } from '../domain/planScope.js';
 
 const STORAGE_KEY = 'qistas:v1';
 const WORKSPACE_KEY = 'qistas:workspace:v1';
@@ -67,20 +67,23 @@ export function normalizeAppData(data, fallback) {
     ? source.teachers.map((teacher) => normalizeTeacher(teacher, requirements))
     : clone(fallback.teachers);
 
+  const planScope = normalizePlanScope(source.planScope, requirements, teachers, gradeRange);
+
   return {
     ...clone(fallback),
     ...source,
     planId: String(source.planId || fallback.planId || 'legacy-plan'),
-    planName: String(source.planName || source.departmentName || fallback.planName || 'خطة توزيع'),
+    planName: planScopePlanName(planScope),
     gradeRange,
     settings: {
       teacherMaxLoad: Number(sourceSettings.teacherMaxLoad) || 18,
       leadMaxLoad: Number(sourceSettings.leadMaxLoad) || 12,
-      schoolShift: sourceSettings.schoolShift === 'double' ? 'double' : 'single',
+      // Kept only for backward-compatible stored data. It no longer affects plan setup.
+      schoolShift: 'single',
     },
     teachers,
     requirements,
-    planScope: normalizePlanScope(source.planScope, requirements, teachers, gradeRange),
+    planScope,
   };
 }
 
@@ -129,7 +132,16 @@ export function loadPlanLibrary() {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed)
-      ? parsed.filter((item) => item && typeof item === 'object' && item.id && item.data)
+      ? parsed
+        .filter((item) => item && typeof item === 'object' && item.id && item.data)
+        .map((item) => ({
+          ...item,
+          name: planScopePlanName(item.data.planScope),
+          data: {
+            ...item.data,
+            planName: planScopePlanName(item.data.planScope),
+          },
+        }))
       : [];
   } catch {
     return [];

@@ -47,10 +47,14 @@ test('app keeps the existing distribution workflow after merging setup sections'
   assert.match(appRoot.innerHTML, /عدد المعلمين/);
   assert.match(appRoot.innerHTML, /الشعب والحصص/);
   assert.match(appRoot.innerHTML, /الخطوة 1 من 3/);
-  assert.match(appRoot.innerHTML, /الإصدار 1\.2\.1/);
+  assert.match(appRoot.innerHTML, /الإصدار 1\.2\.2/);
   assert.doesNotMatch(appRoot.innerHTML, /Gemini|Supabase/);
   assert.doesNotMatch(appRoot.innerHTML, /مواد أساسية|المهارات والفنون/);
   assert.doesNotMatch(appRoot.innerHTML, /تحديث عدد بطاقات المعلمين فقط/);
+  assert.doesNotMatch(appRoot.innerHTML, /نظام الدوام|فترة واحدة|فترتان/);
+  assert.doesNotMatch(appRoot.innerHTML, /data-path="root::planName"/);
+  assert.match(appRoot.innerHTML, /اسم الخطة تلقائيًا/);
+  assert.match(appRoot.innerHTML, /توزيع أنصبة قسم العلوم/);
 
   const click = listeners.get('click');
   await click(clickEvent({ action: 'step', id: '1' }));
@@ -61,13 +65,14 @@ test('app keeps the existing distribution workflow after merging setup sections'
   await click(clickEvent({ action: 'step', id: '2' }));
   assert.match(appRoot.innerHTML, /نماذج التوزيع/);
   await click(clickEvent({ action: 'generate' }));
-  assert.match(appRoot.innerHTML, /عثر قِسطاس على 8 نماذج/);
-  assert.match(appRoot.innerHTML, /النموذج 1 من 8/);
-  assert.match(appRoot.innerHTML, /نماذج إضافية/);
+  assert.match(appRoot.innerHTML, /عثر قِسطاس على نموذج واحد مختلف/);
+  assert.match(appRoot.innerHTML, /النموذج 1 من 1/);
+  assert.match(appRoot.innerHTML, /نموذج بديل/);
   assert.match(appRoot.innerHTML, /اعتماد مبدئي وتعديل/);
 
   await click(clickEvent({ action: 'generate-more' }));
-  assert.match(appRoot.innerHTML, /عثر قِسطاس على 28 نموذجًا/);
+  assert.match(appRoot.innerHTML, /عثر قِسطاس على نموذجين مختلفين/);
+  assert.match(appRoot.innerHTML, /النموذج 2 من 2/);
 
   await click(clickEvent({ action: 'adopt-model' }));
   assert.match(appRoot.innerHTML, /الخطة قيد التعديل/);
@@ -101,6 +106,7 @@ test('choosing one subject prepares a clean isolated plan and teacher list', asy
   const saved = JSON.parse(storage.get('qistas:v1'));
   assert.equal(saved.planScope.mode, 'single');
   assert.equal(saved.planScope.subjectId, 'arabic');
+  assert.equal(saved.planName, 'توزيع أنصبة مادة اللغة العربية');
   assert.equal(saved.teachers.length, 4);
   assert.equal(saved.teachers.filter((teacher) => teacher.isLead).length, 1);
   assert.ok(saved.teachers.every((teacher) => teacher.specialty === 'اللغة العربية'));
@@ -166,6 +172,7 @@ test('stored placeholder teacher names are repaired to the active single subject
   const { storage } = createBrowserHarness({ 'qistas:v1': JSON.stringify(legacy) });
   await import(`../src/app.js?repair=${Date.now()}`);
   const saved = JSON.parse(storage.get('qistas:v1'));
+  assert.equal(saved.planName, 'توزيع أنصبة مادة التربية الإسلامية');
   assert.equal(saved.teachers[0].name, 'المعلم الأول');
   assert.equal(saved.teachers[1].name, 'معلم التربية الإسلامية 1');
   assert.equal(saved.teachers[2].name, 'معلم التربية الإسلامية 2');

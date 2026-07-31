@@ -24,7 +24,7 @@ const teacher = (id, name, specialty, isLead = false) => ({
 
 export const seedData = {
   planId: 'science-8-10',
-  planName: 'قسم العلوم 8-10',
+  planName: 'توزيع أنصبة قسم العلوم',
   schoolName: 'المدرسة النموذجية',
   departmentName: 'قسم العلوم',
   academicYear: defaultAcademicYear(),

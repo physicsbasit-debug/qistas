@@ -1524,3 +1524,31 @@ tbody tr:hover { background: #f9fcfb; }
   background: color-mix(in srgb, #c7463d 12%, white);
   border-color: color-mix(in srgb, #c7463d 50%, transparent);
 }
+
+/* v1.2.2: automatic plan naming and leaner setup */
+.auto-plan-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 16px;
+  border: 1px solid #d4e6e2;
+  border-radius: 15px;
+  background: linear-gradient(135deg, #f8fcfb, #eef8f6);
+}
+.auto-plan-name span { color: var(--muted); font-size: 12px; font-weight: 700; }
+.auto-plan-name strong { color: var(--primary-dark); font-size: 15px; }
+.curriculum-settings.compact-settings {
+  grid-template-columns: minmax(230px, 1fr) repeat(2, minmax(125px, 175px));
+}
+
+@media (max-width: 760px) {
+  .auto-plan-name { align-items: flex-start; flex-direction: column; }
+  .curriculum-settings.compact-settings { grid-template-columns: 1fr 1fr; }
+  .curriculum-settings.compact-settings > div { grid-column: 1 / -1; }
+}
+
+@media (max-width: 480px) {
+  .curriculum-settings.compact-settings { grid-template-columns: 1fr; }
+  .curriculum-settings.compact-settings > div { grid-column: auto; }
+}

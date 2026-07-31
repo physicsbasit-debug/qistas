@@ -55,6 +55,31 @@ test('generates twenty distinct logical models for the science seed', () => {
   assert.equal(new Set(seedSearch.models.map((model) => model.signature)).size, 20);
 });
 
+
+test('one-at-a-time generation respects the requested limit and excludes the previous model', () => {
+  const first = generateDistributionModels(
+    seedData.teachers,
+    seedData.requirements,
+    settings,
+    { limit: 1, attempts: 8, seedOffset: 0 },
+  );
+  assert.equal(first.models.length, 1);
+
+  const alternative = generateDistributionModels(
+    seedData.teachers,
+    seedData.requirements,
+    settings,
+    {
+      limit: 1,
+      attempts: 12,
+      seedOffset: 1,
+      excludeSignatures: [first.models[0].signature],
+    },
+  );
+  assert.equal(alternative.models.length, 1);
+  assert.notEqual(alternative.models[0].signature, first.models[0].signature);
+});
+
 test('all displayed science models are complete', () => {
   for (const model of seedSearch.models) assert.equal(model.unassigned.length, 0);
 });

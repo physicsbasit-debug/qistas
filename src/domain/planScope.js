@@ -109,6 +109,13 @@ export function planScopeLabel(scope) {
   return templateById(scope.templateId)?.label || 'قسم متعدد المواد';
 }
 
+export function planScopePlanName(scope) {
+  const label = planScopeLabel(scope);
+  return scope?.mode === PLAN_SCOPE_MODE.SINGLE
+    ? `توزيع أنصبة مادة ${label}`
+    : `توزيع أنصبة قسم ${label}`;
+}
+
 export function scopeSignature(scope) {
   return `${scope?.mode || ''}|${scope?.templateId || ''}|${scope?.subjectId || ''}|${unique(scope?.selectedSubjectIds).sort().join(',')}`;
 }
