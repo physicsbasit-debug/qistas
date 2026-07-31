@@ -26,7 +26,8 @@ import {
   saveAppData,
   saveWorkspace,
 } from './services/storage.js';
-import { exportScenarioCsv, printScenarioReport } from './services/export.js';
+import { printScenarioReport } from './services/export.js';
+import { exportScenarioExcel } from './services/excelExport.js';
 
 const app = document.querySelector('#app');
 const MODEL_BATCH_SIZE = 20;
@@ -612,7 +613,7 @@ function draftPanel() {
             <h2>${esc(state.data.schoolName)} · ${esc(state.data.departmentName)}</h2>
           </div>
           <div class="actions no-print">
-            <button class="button secondary" data-action="export-draft">تصدير CSV</button>
+            <button class="button secondary" data-action="export-draft">تصدير Excel منسق</button>
             <button class="button secondary" data-action="print">تقرير PDF رسمي</button>
           </div>
         </div>
@@ -687,7 +688,7 @@ function modelResultsPanel() {
         </div>
         <div class="actions no-print">
           <button class="button primary" data-action="adopt-model">اعتماد مبدئي وتعديل</button>
-          <button class="button secondary" data-action="export">تصدير CSV</button>
+          <button class="button secondary" data-action="export">تصدير Excel منسق</button>
           <button class="button secondary" data-action="print">تقرير PDF رسمي</button>
         </div>
       </div>
@@ -1186,10 +1187,30 @@ app.addEventListener('click', async (event) => {
   if (action === 'approve-draft') approveDraft();
 
   if (action === 'export-draft' && state.draft?.scenario) {
-    exportScenarioCsv(state.draft.scenario, state.data.teachers);
+    try {
+      await exportScenarioExcel(state.draft.scenario, state.data, {
+        approved: Boolean(state.draft.approved),
+        approvedAt: state.draft.approvedAt,
+        isDraft: !state.draft.approved,
+        planLabel: state.draft.scenario.label,
+      });
+    } catch (error) {
+      state.draft.notice = error?.message || 'تعذر إنشاء ملف Excel.';
+      state.draft.noticeType = 'error';
+      render();
+    }
   }
 
-  if (action === 'export' && selected()) exportScenarioCsv(selected(), state.data.teachers);
+  if (action === 'export' && selected()) {
+    try {
+      await exportScenarioExcel(selected(), state.data, {
+        planLabel: selected().label,
+      });
+    } catch (error) {
+      state.notice = error?.message || 'تعذر إنشاء ملف Excel.';
+      render();
+    }
+  }
   if (action === 'print') {
     const isDraft = state.resultView === 'draft' && state.draft?.scenario;
     const scenario = isDraft ? state.draft.scenario : selected();

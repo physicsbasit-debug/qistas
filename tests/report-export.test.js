@@ -63,7 +63,7 @@ test('official report is standalone, RTL, landscape, and free of editing control
 
   assert.match(html, /خطة توزيع الأنصبة التدريسية/);
   assert.match(html, /أنصبة موزونة، توزيع أذكى/);
-  assert.match(html, /@page \{ size: 297mm 210mm/);
+  assert.match(html, /@page \{ size: A4 landscape/);
   assert.match(html, /dir="rtl"/);
   assert.match(html, /مدرسة الباسط/);
   assert.match(html, /2026\/2027/);

@@ -1,7 +1,3 @@
-function escapeCsv(value) {
-  return `"${String(value).replaceAll('"', '""')}"`;
-}
-
 function escapeHtml(value = '') {
   return String(value).replace(
     /[&<>'"]/g,
@@ -173,8 +169,7 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>تقرير قِسطاس - ${escapeHtml(data.departmentName || '')}</title>
   <style>
-    @page { size: 297mm 210mm; margin: 6mm; }
-    @page qistas-landscape { size: 297mm 210mm; margin: 6mm; }
+    @page { size: A4 landscape; margin: 6mm; }
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     html, body { margin: 0; padding: 0; background: #fff; color: #17252d; }
     body {
@@ -184,7 +179,7 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
       font-size: 8.7pt;
       line-height: 1.28;
     }
-    .report { page: qistas-landscape; width: 100%; }
+    .report { width: 100%; }
     .report-header {
       position: relative;
       overflow: hidden;
@@ -306,7 +301,7 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
     @media print {
       html, body { width: auto; min-height: 0; }
       body { margin: 0; }
-      .report { page: qistas-landscape; width: 100%; }
+      .report { width: 100%; }
     }
     @media screen {
       body { background: #eef4f2; padding: 18px; }
@@ -411,32 +406,4 @@ export function printScenarioReport(scenario, data, options = {}) {
   frame.srcdoc = html;
   document.body.appendChild(frame);
   return html;
-}
-
-export function exportScenarioCsv(scenario, teachers) {
-  const header = ['المعلم', 'التخصص', 'الصف', 'الشعبة', 'المادة', 'الحصص'];
-  const rows = scenario.assignments.map((assignment) => {
-    const teacher = teachers.find((item) => item.id === assignment.teacherId);
-    return [
-      teacher?.name ?? 'غير معروف',
-      teacher?.specialty ?? '',
-      assignment.grade,
-      assignment.section,
-      assignment.subject,
-      assignment.periods,
-    ];
-  });
-
-  const csv = '\uFEFF' + [header, ...rows]
-    .map((row) => row.map(escapeCsv).join(','))
-    .join('\n');
-
-  const url = URL.createObjectURL(
-    new Blob([csv], { type: 'text/csv;charset=utf-8' }),
-  );
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `qistas-${scenario.id}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
 }
