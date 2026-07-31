@@ -47,7 +47,11 @@ test('app keeps the existing distribution workflow after merging setup sections'
   assert.match(appRoot.innerHTML, /عدد المعلمين/);
   assert.match(appRoot.innerHTML, /الشعب والحصص/);
   assert.match(appRoot.innerHTML, /الخطوة 1 من 3/);
-  assert.match(appRoot.innerHTML, /الإصدار 1\.2\.2/);
+  assert.match(appRoot.innerHTML, /الإصدار 1\.3\.0/);
+  assert.match(appRoot.innerHTML, /خطّط الأنصبة بوضوح/);
+  assert.match(appRoot.innerHTML, /واعتمد التوزيع بثقة/);
+  assert.match(appRoot.innerHTML, /إجمالي الحصص الأسبوعية/);
+  assert.match(appRoot.innerHTML, /تكليفًا تدريسيًا/);
   assert.doesNotMatch(appRoot.innerHTML, /Gemini|Supabase/);
   assert.doesNotMatch(appRoot.innerHTML, /مواد أساسية|المهارات والفنون/);
   assert.doesNotMatch(appRoot.innerHTML, /تحديث عدد بطاقات المعلمين فقط/);

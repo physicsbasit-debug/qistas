@@ -1414,17 +1414,17 @@ function render() {
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.2.2 · توزيع أول ثم بدائل عند الطلب</span>
-            <h1>وزّع الأنصبة بثقة،<br><em>من دون زحمة.</em></h1>
-            <p>اختر المادة أو القسم مرة واحدة، وهيّئ المعلمين والشعب، ثم أنشئ أفضل توزيع واطلب بديلًا عند الحاجة.</p>
-            <div class="hero-features"><span>✓ جميع المواد</span><span>✓ الصفوف 1-12</span><span>✓ بدائل عند الطلب</span></div>
+            <span class="status-pill">الإصدار 1.3.0 · تخطيط مرن للأنصبة</span>
+            <h1>خطّط الأنصبة بوضوح،<br><em>واعتمد التوزيع بثقة.</em></h1>
+            <p>حدّد المادة أو القسم، أدخل بيانات الشعب والمعلمين، ثم راجع توزيعًا متوازنًا واطلب بديلًا عند الحاجة.</p>
+            <div class="hero-features"><span>✓ تهيئة حسب المادة</span><span>✓ الصفوف من 1 إلى 12</span><span>✓ بدائل محفوظة عند الطلب</span></div>
           </div>
           <div class="intro-stat">
-            <span>الحصص المطلوبة</span>
+            <span>إجمالي الحصص الأسبوعية</span>
             <strong>${totalPeriods()}</strong>
-            <small>${totalSections()} شعبة ومقررًا</small>
+            <small>${totalSections()} تكليفًا تدريسيًا</small>
             <div class="intro-progress"><i style="width:${Math.min(100, ((state.step + 1) / 3) * 100)}%"></i></div>
-            <b>الخطوة ${state.step + 1} من 3</b>
+            <b>المرحلة ${state.step + 1} من 3</b>
           </div>
         </section>
         <nav class="step-nav" aria-label="مراحل إعداد الخطة">
