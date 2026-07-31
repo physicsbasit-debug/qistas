@@ -23,11 +23,24 @@ import {
   clone,
   loadAppData,
   loadWorkspace,
+  loadPlanLibrary,
+  normalizeAppData,
   saveAppData,
+  savePlanLibrary,
   saveWorkspace,
 } from './services/storage.js';
 import { printScenarioReport } from './services/export.js';
 import { exportScenarioExcel } from './services/excelExport.js';
+import {
+  buildRequirementsForScope,
+  normalizePlanScope,
+  PLAN_SCOPE_MODE,
+  planScopeLabel,
+  planScopeSubjects,
+  requirementBelongsToScope,
+  scopeSignature,
+  subjectsAvailableInRange,
+} from './domain/planScope.js';
 import {
   compareGrades,
   gradeLabel,
@@ -37,13 +50,11 @@ import {
   normalizeGradeRange,
 } from './domain/grades.js';
 import {
-  allSubjectLabels,
   DEPARTMENT_TEMPLATES,
+  SUBJECT_CATALOG,
   recommendedPeriods,
-  requirementsForTemplate,
   SCHOOL_SHIFT,
   subjectByLabel,
-  subjectsForGrade,
   templateById,
 } from './domain/subjects.js';
 
@@ -52,20 +63,24 @@ const MODEL_BATCH_SIZE = 20;
 const MAX_DISPLAY_MODELS = 100;
 
 const storedWorkspace = loadWorkspace();
+const initialData = loadAppData(seedData);
 
 let state = {
-  step: storedWorkspace?.draft ? 3 : 0,
-  data: loadAppData(seedData),
+  step: storedWorkspace?.draft ? 2 : 0,
+  data: initialData,
+  pendingPlanScope: clone(initialData.planScope),
+  planLibrary: loadPlanLibrary(),
+  selectedPlanId: '',
   scenarios: [],
   selectedId: 'balanced',
   errors: [],
   notice: '',
+  noticeType: 'success',
   generating: false,
   generationRound: 0,
   searchStats: { attempts: 0, uniqueFound: 0, completeFound: 0 },
   resultView: storedWorkspace?.draft ? 'draft' : 'models',
   draft: storedWorkspace?.draft ?? null,
-  subjectTemplateId: 'science',
 };
 
 const esc = (value = '') => String(value).replace(
@@ -125,6 +140,185 @@ const nextRequirementGrade = () => {
     : gradeLabel(range.start);
 };
 
+const normalizedPendingScope = () => normalizePlanScope(
+  state.pendingPlanScope,
+  state.data.requirements,
+  state.data.teachers,
+  activeGradeRange(),
+);
+const currentScopeSubjects = () => planScopeSubjects(state.data.planScope, activeGradeRange());
+const currentScopeLabels = () => currentScopeSubjects().map((item) => item.label);
+const allSubjectsInActiveRange = () => subjectsAvailableInRange(
+  SUBJECT_CATALOG.map((item) => item.id),
+  activeGradeRange(),
+);
+const requirementsOutsideScope = () => state.data.requirements.filter(
+  (requirement) => !requirementBelongsToScope(requirement, state.data.planScope),
+);
+
+function savePlanSnapshot(data = state.data) {
+  const snapshot = {
+    id: String(data.planId || uid()),
+    name: String(data.planName || data.departmentName || 'خطة توزيع'),
+    updatedAt: new Date().toISOString(),
+    data: clone(data),
+  };
+  const index = state.planLibrary.findIndex((item) => item.id === snapshot.id);
+  if (index >= 0) state.planLibrary[index] = snapshot;
+  else state.planLibrary.unshift(snapshot);
+  state.planLibrary = state.planLibrary
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)))
+    .slice(0, 20);
+  savePlanLibrary(state.planLibrary);
+  return snapshot;
+}
+
+function planDefaultName(scope = state.data.planScope) {
+  return `${planScopeLabel(scope)} ${gradeRangeLabel(activeGradeRange())}`.trim();
+}
+
+function buildTeachersForScope(scope, count, hasLead, { preservePolicies = true } = {}) {
+  const subjects = planScopeSubjects(scope, activeGradeRange());
+  const labels = subjects.map((item) => item.label);
+  const fallbackSpecialty = labels[0] || '';
+  const existing = [...state.data.teachers].sort((a, b) => Number(b.isLead) - Number(a.isLead));
+  const total = Math.max(1, Number(count) || 1);
+  const teachers = [];
+
+  for (let index = 0; index < total; index += 1) {
+    const previous = existing[index];
+    const isLead = Boolean(hasLead && index === 0);
+    const specialty = scope.mode === PLAN_SCOPE_MODE.SINGLE
+      ? fallbackSpecialty
+      : labels.includes(previous?.specialty)
+        ? previous.specialty
+        : labels[(index - (hasLead ? 1 : 0) + labels.length) % Math.max(1, labels.length)] || fallbackSpecialty;
+    const assignmentPolicy = preservePolicies && previous
+      ? normalizeAssignmentPolicy(previous.assignmentPolicy)
+      : createDefaultAssignmentPolicy();
+
+    teachers.push({
+      id: previous?.id || uid(),
+      name: previous?.name || (isLead ? 'المعلم الأول' : `معلم ${index + 1}`),
+      specialty,
+      isLead,
+      active: previous?.active !== false,
+      allowedSubjects: [],
+      assignmentPolicy,
+    });
+  }
+
+  return teachers;
+}
+
+function applyPlanConfiguration({ syncTeachersOnly = false } = {}) {
+  const requested = normalizedPendingScope();
+  const pending = syncTeachersOnly
+    ? normalizePlanScope({
+      ...state.data.planScope,
+      teacherCount: requested.teacherCount,
+      hasLead: requested.hasLead,
+    }, state.data.requirements, state.data.teachers, activeGradeRange())
+    : requested;
+  const currentSignature = scopeSignature(state.data.planScope);
+  const pendingSignature = scopeSignature(pending);
+  const scopeChanged = currentSignature !== pendingSignature;
+
+  if (!syncTeachersOnly && scopeChanged && (state.data.requirements.length || state.data.teachers.length)) {
+    savePlanSnapshot();
+  }
+
+  const requirements = syncTeachersOnly
+    ? state.data.requirements
+    : buildRequirementsForScope(
+      pending,
+      activeGradeRange(),
+      state.data.settings.schoolShift,
+      scopeChanged ? [] : state.data.requirements,
+    );
+  const teachers = buildTeachersForScope(
+    pending,
+    pending.teacherCount,
+    pending.hasLead,
+    { preservePolicies: !scopeChanged },
+  );
+  const planName = scopeChanged || !state.data.planName
+    ? planDefaultName(pending)
+    : state.data.planName;
+
+  state.data = {
+    ...state.data,
+    planId: scopeChanged ? uid() : state.data.planId,
+    planName,
+    departmentName: scopeChanged || !state.data.departmentName
+      ? pending.mode === PLAN_SCOPE_MODE.SINGLE
+        ? planScopeLabel(pending)
+        : `قسم ${planScopeLabel(pending)}`
+      : state.data.departmentName,
+    planScope: clone(pending),
+    teachers,
+    requirements,
+  };
+  state.pendingPlanScope = clone(pending);
+  state.notice = syncTeachersOnly
+    ? `تمت تهيئة ${teachers.length} بطاقات للمعلمين${pending.hasLead ? '، بينها معلم أول واحد' : ''}.`
+    : scopeChanged
+      ? `تم إنشاء خطة مستقلة لمادة أو قسم «${planScopeLabel(pending)}»، وحُفظت الخطة السابقة ضمن الخطط المحفوظة.`
+      : `تم تحديث متطلبات ${planScopeLabel(pending)} وقائمة المعلمين دون إدخال مواد من خارج نطاق الخطة.`;
+  state.noticeType = 'success';
+  invalidateResults();
+  saveAppData(state.data);
+  render();
+}
+
+function openSavedPlan(planId) {
+  const record = state.planLibrary.find((item) => item.id === planId);
+  if (!record) return;
+  savePlanSnapshot();
+  state.data = normalizeAppData(record.data, seedData);
+  state.pendingPlanScope = clone(state.data.planScope);
+  state.selectedPlanId = '';
+  state.step = 0;
+  state.notice = `تم فتح الخطة: ${record.name}.`;
+  state.noticeType = 'success';
+  invalidateResults();
+  saveAppData(state.data);
+  render();
+}
+
+function createNewPlan() {
+  savePlanSnapshot();
+  const base = clone(seedData);
+  const range = activeGradeRange();
+  state.data = normalizeAppData({
+    ...base,
+    planId: uid(),
+    planName: 'خطة جديدة',
+    schoolName: state.data.schoolName,
+    academicYear: state.data.academicYear,
+    gradeRange: range,
+    settings: clone(state.data.settings),
+    departmentName: '',
+    planScope: {
+      mode: PLAN_SCOPE_MODE.SINGLE,
+      templateId: 'arabic',
+      subjectId: 'arabic',
+      selectedSubjectIds: [],
+      teacherCount: 1,
+      hasLead: false,
+    },
+    teachers: [],
+    requirements: [],
+  }, seedData);
+  state.pendingPlanScope = clone(state.data.planScope);
+  state.step = 0;
+  state.notice = 'تم إنشاء خطة جديدة نظيفة. اختر المادة أو القسم ثم اضغط تهيئة الخطة.';
+  state.noticeType = 'success';
+  invalidateResults();
+  saveAppData(state.data);
+  render();
+}
+
 function invalidateResults() {
   state.scenarios = [];
   state.errors = [];
@@ -169,6 +363,12 @@ function updateData(path, value) {
     if (field === 'start' && range.start > range.end) range.end = range.start;
     if (field === 'end' && range.end < range.start) range.start = range.end;
     state.data.gradeRange = normalizeGradeRange(range, state.data.requirements, { start: 1, end: 12 });
+    state.pendingPlanScope = normalizePlanScope(
+      state.pendingPlanScope,
+      state.data.requirements,
+      state.data.teachers,
+      state.data.gradeRange,
+    );
   }
 
   if (kind === 'settings') {
@@ -180,8 +380,11 @@ function updateData(path, value) {
   if (kind === 'teacher') {
     const teacher = state.data.teachers.find((item) => item.id === id);
     if (!teacher) return;
-    if (field === 'isLead') teacher[field] = value === 'true';
-    else teacher[field] = value;
+    if (field === 'isLead') {
+      teacher[field] = value === 'true';
+      state.data.planScope.hasLead = state.data.teachers.some((item) => item.isLead);
+      state.pendingPlanScope.hasLead = state.data.planScope.hasLead;
+    } else teacher[field] = value;
   }
 
   if (kind === 'req') {
@@ -254,6 +457,142 @@ function setPolicyMode(teacher, mode) {
   }
 }
 
+function planLibraryPanel() {
+  const plans = state.planLibrary;
+  return `
+    <div class="plan-library-bar">
+      <div class="current-plan-copy">
+        <span class="plan-dot" aria-hidden="true"></span>
+        <div><small>الخطة الحالية</small><strong>${esc(state.data.planName || state.data.departmentName || 'خطة توزيع')}</strong></div>
+      </div>
+      <div class="plan-library-actions">
+        <label class="saved-plan-select">الخطط المحفوظة
+          <select data-plan-library-select ${plans.length ? '' : 'disabled'}>
+            <option value="">${plans.length ? 'اختر خطة محفوظة' : 'لا توجد خطط محفوظة بعد'}</option>
+            ${plans.map((item) => `<option value="${esc(item.id)}" ${state.selectedPlanId === item.id ? 'selected' : ''}>${esc(item.name)}</option>`).join('')}
+          </select>
+        </label>
+        <button class="button secondary compact" data-action="open-plan" ${state.selectedPlanId ? '' : 'disabled'}>فتح</button>
+        <button class="button secondary compact" data-action="save-plan">حفظ الخطة</button>
+        <button class="button secondary compact" data-action="new-plan">خطة جديدة</button>
+        <button class="button ghost-danger compact" data-action="delete-saved-plan" ${state.selectedPlanId ? '' : 'disabled'}>حذف المحفوظة</button>
+      </div>
+    </div>`;
+}
+
+function scopeSetupCard() {
+  const pending = normalizedPendingScope();
+  const activeSubjects = allSubjectsInActiveRange();
+  const template = templateById(pending.templateId);
+  const templateSubjects = subjectsAvailableInRange(template.subjectIds, activeGradeRange());
+  const selectedIds = new Set(pending.selectedSubjectIds);
+  const currentChanged = scopeSignature(pending) !== scopeSignature(state.data.planScope);
+
+  return `
+    <div class="scope-setup-card">
+      <div class="scope-heading">
+        <div>
+          <p class="eyebrow">نطاق الخطة</p>
+          <h3>ماذا تريد أن توزّع؟</h3>
+          <p class="muted">اختر مادة واحدة أو قسمًا متعدد المواد. لن تدخل أي مادة أخرى في المعلمين أو النتائج أو التقارير.</p>
+        </div>
+        <span class="scope-status ${currentChanged ? 'changed' : ''}">${currentChanged ? 'تغييرات غير مطبقة' : 'النطاق مطبق'}</span>
+      </div>
+
+      <div class="scope-mode-switch" role="group" aria-label="نوع خطة التوزيع">
+        <label class="scope-mode-option ${pending.mode === PLAN_SCOPE_MODE.SINGLE ? 'selected' : ''}">
+          <input type="radio" name="plan-scope-mode" value="single" data-plan-scope="mode" ${pending.mode === PLAN_SCOPE_MODE.SINGLE ? 'checked' : ''}>
+          <span><strong>مادة واحدة</strong><small>مثل العربية أو الرياضيات أو الفيزياء</small></span>
+        </label>
+        <label class="scope-mode-option ${pending.mode === PLAN_SCOPE_MODE.DEPARTMENT ? 'selected' : ''}">
+          <input type="radio" name="plan-scope-mode" value="department" data-plan-scope="mode" ${pending.mode === PLAN_SCOPE_MODE.DEPARTMENT ? 'checked' : ''}>
+          <span><strong>قسم متعدد المواد</strong><small>مثل العلوم أو الدراسات الاجتماعية</small></span>
+        </label>
+      </div>
+
+      ${pending.mode === PLAN_SCOPE_MODE.SINGLE ? `
+        <label class="scope-main-select">المادة
+          <select data-plan-scope="subjectId">
+            ${activeSubjects.map((item) => `<option value="${esc(item.id)}" ${item.id === pending.subjectId ? 'selected' : ''}>${esc(item.label)} · ${esc(item.category)}</option>`).join('')}
+          </select>
+        </label>` : `
+        <div class="department-scope-grid">
+          <label>القسم
+            <select data-plan-scope="templateId">
+              ${DEPARTMENT_TEMPLATES.map((item) => `<option value="${esc(item.id)}" ${item.id === pending.templateId ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
+            </select>
+          </label>
+          <div class="department-subjects">
+            <span>المواد الداخلة في الخطة</span>
+            <div class="scope-subject-chips">
+              ${templateSubjects.map((item) => `
+                <label class="scope-subject-chip ${selectedIds.has(item.id) ? 'selected' : ''}">
+                  <input type="checkbox" data-plan-subject-id="${esc(item.id)}" ${selectedIds.has(item.id) ? 'checked' : ''}>
+                  <span>${esc(item.label)}</span>
+                </label>`).join('') || '<small class="muted">لا توجد مواد من هذا القسم ضمن نطاق الصفوف الحالي.</small>'}
+            </div>
+          </div>
+        </div>`}
+
+      <div class="teacher-count-strip">
+        <div>
+          <strong>فريق المادة أو القسم</strong>
+          <p class="muted">أدخل العدد الإجمالي. المعلم الأول، إن وجد، محسوب ضمن العدد.</p>
+        </div>
+        <label>عدد المعلمين
+          <input type="number" min="1" max="100" data-plan-scope="teacherCount" value="${pending.teacherCount}">
+        </label>
+        <label class="lead-toggle"><input type="checkbox" data-plan-scope-check="hasLead" ${pending.hasLead ? 'checked' : ''}><span>يوجد معلم أول ضمن العدد</span></label>
+      </div>
+
+      <div class="scope-actions">
+        <button class="button primary" data-action="apply-plan-configuration">تهيئة الخطة بالكامل</button>
+        <button class="button secondary" data-action="sync-teacher-count">تحديث عدد بطاقات المعلمين فقط</button>
+        <small>عند تغيير المادة أو القسم تُحفظ الخطة السابقة تلقائيًا كخطة مستقلة.</small>
+      </div>
+    </div>`;
+}
+
+function requirementSubjectOptions(requirement) {
+  const labels = currentScopeLabels();
+  const options = labels.includes(requirement.subject) ? labels : [requirement.subject, ...labels].filter(Boolean);
+  return options.map((label) => `<option value="${esc(label)}" ${label === requirement.subject ? 'selected' : ''}>${esc(label)}</option>`).join('');
+}
+
+function requirementsSetupSection() {
+  return `
+    <details class="requirements-details" open>
+      <summary>
+        <div><strong>الشعب والحصص</strong><small>عدّل عدد الشعب وحصص الشعبة فقط. المواد محصورة في نطاق الخطة.</small></div>
+        <span>${state.data.requirements.length} مقرر</span>
+      </summary>
+      <div class="requirements-details-body">
+        <div class="section-heading compact-heading">
+          <div><h3>متطلبات التوزيع</h3><p class="muted">تُنشأ تلقائيًا بحسب المادة ونطاق الصفوف، ويمكن تعديل الأرقام يدويًا.</p></div>
+          <button class="button secondary compact" data-action="add-req"><span aria-hidden="true">＋</span> إضافة صف</button>
+        </div>
+        <div class="table-wrap compact-table">
+          <table>
+            <thead><tr><th>الصف</th><th>المادة</th><th>عدد الشعب</th><th>حصص الشعبة</th><th>الإجمالي</th><th></th></tr></thead>
+            <tbody>
+              ${state.data.requirements.map((requirement) => `
+                <tr>
+                  <td data-label="الصف"><select data-path="req:${requirement.id}:grade">${gradeOptions(requirement.grade)}</select></td>
+                  <td data-label="المادة" class="subject-cell"><select data-path="req:${requirement.id}:subject">${requirementSubjectOptions(requirement)}</select></td>
+                  <td data-label="عدد الشعب"><input class="number" type="number" min="1" data-path="req:${requirement.id}:sections" value="${requirement.sections}"></td>
+                  <td data-label="حصص الشعبة"><input class="number" type="number" min="1" data-path="req:${requirement.id}:periodsPerSection" value="${requirement.periodsPerSection}"></td>
+                  <td data-label="الإجمالي"><strong class="row-total">${Number(requirement.sections) * Number(requirement.periodsPerSection)}</strong></td>
+                  <td class="row-action"><button class="icon-button danger" data-action="delete-req" data-id="${requirement.id}">×</button></td>
+                </tr>`).join('') || '<tr><td colspan="6"><div class="empty-table-state">اختر المادة أو القسم ثم اضغط «تهيئة الخطة بالكامل».</div></td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        ${outOfRangeRequirements().length ? `<div class="alert warning">يوجد ${outOfRangeRequirements().length} مقرر خارج نطاق المدرسة الحالي.</div>` : ''}
+        ${requirementsOutsideScope().length ? `<div class="alert error">يوجد ${requirementsOutsideScope().length} مقرر من خارج مادة أو قسم الخطة. اضغط «تهيئة الخطة بالكامل» لتنظيفها.</div>` : ''}
+      </div>
+    </details>`;
+}
+
 function setupPanel() {
   return `
     <section class="panel page-panel stack-lg">
@@ -261,17 +600,20 @@ function setupPanel() {
         <span class="panel-icon" aria-hidden="true">١</span>
         <div>
           <p class="eyebrow">الخطوة الأولى</p>
-          <h2>بيانات الخطة</h2>
-          <p class="muted">أدخل بيانات القسم واضبط سقف النصاب مرة واحدة، ثم اترك الحسابات الثقيلة لقِسطاس.</p>
+          <h2>إعداد خطة التوزيع</h2>
+          <p class="muted">بيانات المدرسة، المادة، عدد المعلمين، الشعب والحصص في مكان واحد منظم.</p>
         </div>
       </div>
+
+      ${planLibraryPanel()}
+      ${state.notice ? `<div class="alert ${state.noticeType === 'error' ? 'error' : state.noticeType === 'warning' ? 'warning' : 'success'}">${esc(state.notice)}</div>` : ''}
 
       <div class="form-grid three">
         <label>اسم المدرسة
           <input data-path="root::schoolName" value="${esc(state.data.schoolName)}">
         </label>
-        <label>القسم أو المجال
-          <input data-path="root::departmentName" value="${esc(state.data.departmentName)}">
+        <label>اسم الخطة
+          <input data-path="root::planName" value="${esc(state.data.planName || '')}" placeholder="مثل: خطة اللغة العربية 5-8">
         </label>
         <label>السنة الدراسية
           <input data-path="root::academicYear" value="${esc(state.data.academicYear || '')}" placeholder="2026/2027">
@@ -281,53 +623,27 @@ function setupPanel() {
       <div class="grade-range-card">
         <div class="grade-range-copy">
           <span class="range-icon" aria-hidden="true">١٢</span>
-          <div>
-            <strong>الصفوف التي تخدمها المدرسة</strong>
-            <p class="muted">اختر نطاق المدرسة مرة واحدة. يدعم قِسطاس جميع الصفوف من الأول إلى الثاني عشر.</p>
-          </div>
+          <div><strong>الصفوف التي تخدمها المدرسة</strong><p class="muted">اختر نطاق المدرسة مرة واحدة من الأول إلى الثاني عشر.</p></div>
         </div>
         <div class="grade-range-fields">
-          <label>من الصف
-            <select data-path="gradeRange::start">
-              ${Array.from({ length: 12 }, (_, index) => index + 1).map((number) => `<option value="${number}" ${activeGradeRange().start === number ? 'selected' : ''}>${esc(gradeLabel(number))}</option>`).join('')}
-            </select>
-          </label>
-          <label>إلى الصف
-            <select data-path="gradeRange::end">
-              ${Array.from({ length: 12 }, (_, index) => index + 1).map((number) => `<option value="${number}" ${activeGradeRange().end === number ? 'selected' : ''}>${esc(gradeLabel(number))}</option>`).join('')}
-            </select>
-          </label>
+          <label>من الصف<select data-path="gradeRange::start">${Array.from({ length: 12 }, (_, index) => index + 1).map((number) => `<option value="${number}" ${activeGradeRange().start === number ? 'selected' : ''}>${esc(gradeLabel(number))}</option>`).join('')}</select></label>
+          <label>إلى الصف<select data-path="gradeRange::end">${Array.from({ length: 12 }, (_, index) => index + 1).map((number) => `<option value="${number}" ${activeGradeRange().end === number ? 'selected' : ''}>${esc(gradeLabel(number))}</option>`).join('')}</select></label>
         </div>
         <div class="grade-presets" aria-label="نطاقات جاهزة">
-          ${[
-            [1, 4, '1-4'],
-            [5, 8, '5-8'],
-            [8, 10, '8-10'],
-            [9, 12, '9-12'],
-            [1, 12, '1-12'],
-          ].map(([start, end, label]) => `<button class="range-preset ${activeGradeRange().start === start && activeGradeRange().end === end ? 'active' : ''}" data-action="set-grade-range" data-start="${start}" data-end="${end}">${label}</button>`).join('')}
+          ${[[1, 4, '1-4'], [5, 8, '5-8'], [8, 10, '8-10'], [9, 12, '9-12'], [1, 12, '1-12']].map(([start, end, label]) => `<button class="range-preset ${activeGradeRange().start === start && activeGradeRange().end === end ? 'active' : ''}" data-action="set-grade-range" data-start="${start}" data-end="${end}">${label}</button>`).join('')}
         </div>
         <div class="grade-range-summary"><span>النطاق الحالي</span><strong>${esc(gradeRangeLabel(activeGradeRange()))}</strong></div>
       </div>
 
       <div class="simple-settings curriculum-settings">
-        <div>
-          <strong>إعدادات المدرسة</strong>
-          <p class="muted">اختر نظام الدوام لتظهر الحصص المقترحة، واضبط سقف الأنصبة مرة واحدة.</p>
-        </div>
-        <label>نظام الدوام
-          <select data-path="settings::schoolShift">
-            <option value="single" ${state.data.settings.schoolShift === SCHOOL_SHIFT.SINGLE ? 'selected' : ''}>فترة واحدة</option>
-            <option value="double" ${state.data.settings.schoolShift === SCHOOL_SHIFT.DOUBLE ? 'selected' : ''}>فترتان</option>
-          </select>
-        </label>
-        <label>سقف المعلم
-          <input type="number" min="1" data-path="settings::teacherMaxLoad" value="${state.data.settings.teacherMaxLoad}">
-        </label>
-        <label>سقف المعلم الأول
-          <input type="number" min="1" data-path="settings::leadMaxLoad" value="${state.data.settings.leadMaxLoad}">
-        </label>
+        <div><strong>إعدادات المدرسة</strong><p class="muted">إعدادات عامة تطبق على الخطة الحالية.</p></div>
+        <label>نظام الدوام<select data-path="settings::schoolShift"><option value="single" ${state.data.settings.schoolShift === SCHOOL_SHIFT.SINGLE ? 'selected' : ''}>فترة واحدة</option><option value="double" ${state.data.settings.schoolShift === SCHOOL_SHIFT.DOUBLE ? 'selected' : ''}>فترتان</option></select></label>
+        <label>سقف المعلم<input type="number" min="1" data-path="settings::teacherMaxLoad" value="${state.data.settings.teacherMaxLoad}"></label>
+        <label>سقف المعلم الأول<input type="number" min="1" data-path="settings::leadMaxLoad" value="${state.data.settings.leadMaxLoad}"></label>
       </div>
+
+      ${scopeSetupCard()}
+      ${requirementsSetupSection()}
 
       <div class="kpi-grid">
         <article class="kpi kpi-teachers"><span>المعلمون النشطون</span><strong>${state.data.teachers.filter((teacher) => teacher.active).length}</strong><small>ضمن الخطة الحالية</small></article>
@@ -335,7 +651,7 @@ function setupPanel() {
         <article class="kpi kpi-periods"><span>إجمالي الحصص</span><strong>${totalPeriods()}</strong><small>حصة أسبوعية</small></article>
       </div>
 
-      <div class="note"><span class="note-icon" aria-hidden="true">✓</span><span>تُحفظ بياناتك تلقائيًا على هذا الجهاز، ويعمل محرك التوزيع محليًا دون اتصال سحابي.</span></div>
+      <div class="note"><span class="note-icon" aria-hidden="true">✓</span><span>تُحفظ بياناتك تلقائيًا، وتبقى كل خطة معزولة عن مواد الخطط الأخرى.</span></div>
     </section>`;
 }
 
@@ -431,7 +747,9 @@ function teacherEditor(teacher, index) {
           <input data-path="teacher:${teacher.id}:name" value="${esc(teacher.name)}">
         </label>
         <label>التخصص
-          <input list="qistas-subject-specialties" data-path="teacher:${teacher.id}:specialty" value="${esc(teacher.specialty)}" placeholder="اختر أو اكتب تخصصًا">
+          ${state.data.planScope.mode === PLAN_SCOPE_MODE.SINGLE
+    ? `<input value="${esc(currentScopeLabels()[0] || teacher.specialty || '')}" readonly aria-readonly="true">`
+    : `<select data-path="teacher:${teacher.id}:specialty">${currentScopeLabels().map((label) => `<option value="${esc(label)}" ${label === teacher.specialty ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select>`}
         </label>
         <label>الدور
           <select data-path="teacher:${teacher.id}:isLead">
@@ -477,79 +795,6 @@ function teachersPanel() {
       <div class="teacher-editor-list">
         ${state.data.teachers.map(teacherEditor).join('')}
       </div>
-    </section>`;
-}
-
-function subjectSuggestions(requirement) {
-  const catalog = subjectsForGrade(requirement.grade);
-  return `
-    <datalist id="subjects-${esc(requirement.id)}">
-      ${catalog.map((item) => `<option value="${esc(item.label)}">${esc(item.category)}${item.optional ? ' · اختياري' : ''}</option>`).join('')}
-    </datalist>`;
-}
-
-function requirementsPanel() {
-  const template = templateById(state.subjectTemplateId);
-  return `
-    <section class="panel page-panel stack-lg">
-      <div class="section-heading">
-        <div class="panel-intro">
-          <span class="panel-icon" aria-hidden="true">٣</span>
-          <div>
-            <p class="eyebrow">الخطوة الثالثة</p>
-            <h2>الصفوف والمواد</h2>
-            <p class="muted">اختر من مكتبة المواد العُمانية أو اكتب أي مادة مخصصة، ثم أدخل عدد الشعب فقط.</p>
-          </div>
-        </div>
-        <button class="button secondary" data-action="add-req"><span aria-hidden="true">＋</span> إضافة صف ومادة</button>
-      </div>
-
-      <div class="subject-library-card">
-        <div class="subject-library-copy">
-          <span class="library-icon" aria-hidden="true">م</span>
-          <div>
-            <p class="eyebrow">مكتبة المواد العُمانية</p>
-            <h3>أضف مواد القسم بنقرة واحدة</h3>
-            <p class="muted">تشمل مواد التعليم العام من الأول إلى الثاني عشر، والمواد الاختيارية والمسارات المهنية. الحصص المقترحة قابلة للتعديل.</p>
-          </div>
-        </div>
-        <div class="subject-library-actions">
-          <label>القسم أو مجموعة المواد
-            <select data-subject-template>
-              ${DEPARTMENT_TEMPLATES.map((item) => `<option value="${item.id}" ${item.id === state.subjectTemplateId ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
-            </select>
-          </label>
-          <button class="button primary" data-action="apply-subject-template">إضافة مواد ${esc(template.label)}</button>
-        </div>
-        <div class="library-footnote"><span>النطاق: ${esc(gradeRangeLabel(activeGradeRange()))}</span><span>الدوام: ${state.data.settings.schoolShift === SCHOOL_SHIFT.DOUBLE ? 'فترتان' : 'فترة واحدة'}</span><span>لا تُضاف الصفوف أو المواد المكررة</span></div>
-      </div>
-
-      ${state.notice ? `<div class="alert success">${esc(state.notice)}</div>` : ''}
-      <div class="table-wrap compact-table">
-        <table>
-          <thead><tr><th>الصف</th><th>المادة</th><th>عدد الشعب</th><th>حصص الشعبة</th><th>الإجمالي</th><th></th></tr></thead>
-          <tbody>
-            ${state.data.requirements.map((requirement) => {
-    const official = subjectByLabel(requirement.subject);
-    return `
-              <tr>
-                <td data-label="الصف"><select data-path="req:${requirement.id}:grade">${gradeOptions(requirement.grade)}</select></td>
-                <td data-label="المادة" class="subject-cell">
-                  <input list="subjects-${esc(requirement.id)}" data-path="req:${requirement.id}:subject" value="${esc(requirement.subject)}" placeholder="اختر أو اكتب مادة">
-                  ${subjectSuggestions(requirement)}
-                  <small class="subject-source ${official ? '' : 'custom'}">${official ? `${esc(official.category)}${official.optional ? ' · اختياري' : ''}` : 'مادة مخصصة'}</small>
-                </td>
-                <td data-label="عدد الشعب"><input class="number" type="number" min="1" data-path="req:${requirement.id}:sections" value="${requirement.sections}"></td>
-                <td data-label="حصص الشعبة"><input class="number" type="number" min="1" data-path="req:${requirement.id}:periodsPerSection" value="${requirement.periodsPerSection}"></td>
-                <td data-label="الإجمالي"><strong class="row-total">${Number(requirement.sections) * Number(requirement.periodsPerSection)}</strong></td>
-                <td class="row-action"><button class="icon-button danger" data-action="delete-req" data-id="${requirement.id}">×</button></td>
-              </tr>`;
-  }).join('')}
-          </tbody>
-        </table>
-      </div>
-      ${outOfRangeRequirements().length ? `<div class="alert warning">يوجد ${outOfRangeRequirements().length} مقرر خارج نطاق المدرسة الحالي. وسّع النطاق أو عدّل الصف قبل التوزيع.</div>` : ''}
-      <div class="note">القائمة الرسمية وسيلة مساعدة وليست قيدًا: يمكنك تعديل عدد الحصص، أو إضافة أي مادة أو برنامج خاص بالمدرسة.</div>
     </section>`;
 }
 
@@ -902,9 +1147,9 @@ function modelResultsPanel() {
     <section class="stack-lg">
       <div class="panel page-panel hero-result">
         <div class="panel-intro">
-          <span class="panel-icon" aria-hidden="true">٤</span>
+          <span class="panel-icon" aria-hidden="true">٣</span>
           <div>
-            <p class="eyebrow">الخطوة الرابعة</p>
+            <p class="eyebrow">الخطوة الثالثة</p>
             <h2>نماذج التوزيع</h2>
             <p class="muted">يبحث قِسطاس عن حلول متعددة، يرتبها، ويترك القرار النهائي لك.</p>
           </div>
@@ -959,7 +1204,7 @@ function adoptSelectedModel() {
     rebalanceRound: 0,
   };
   state.resultView = 'draft';
-  state.step = 3;
+  state.step = 2;
   persistDraft();
   render();
 }
@@ -1105,7 +1350,8 @@ async function rebalanceDraft() {
 }
 
 function render() {
-  const steps = ['الإعداد', 'المعلمون', 'الصفوف والمواد', 'التوزيع'];
+  const steps = ['إعداد الخطة', 'المعلمون', 'التوزيع'];
+  const stepDescriptions = ['المادة والشعب والحصص', 'الأسماء وضوابط الإسناد', 'النماذج والمراجعة والاعتماد'];
   app.innerHTML = `
     <div class="app-shell step-${state.step}">
       <header class="app-header">
@@ -1118,36 +1364,31 @@ function render() {
           <button class="text-button reset-button" data-action="reset"><span aria-hidden="true">↻</span> استعادة المثال</button>
         </div>
       </header>
-      <datalist id="qistas-subject-specialties">${allSubjectLabels().map((label) => `<option value="${esc(label)}"></option>`).join('')}</datalist>
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.1.0 · جميع مواد المدارس الحكومية</span>
+            <span class="status-pill">الإصدار 1.2.0 · خطة معزولة لكل مادة أو قسم</span>
             <h1>وزّع الأنصبة بثقة،<br><em>من دون زحمة.</em></h1>
-            <p>اختر الصفوف والمواد من المكتبة العُمانية، وأدخل المعلمين والشعب، ثم اختر من نماذج توزيع صحيحة ومتوازنة.</p>
+            <p>اختر المادة أو القسم مرة واحدة، وهيّئ المعلمين والشعب، ثم اختر من نماذج توزيع صحيحة ومتوازنة.</p>
             <div class="hero-features"><span>✓ جميع المواد</span><span>✓ الصفوف 1-12</span><span>✓ نماذج متعددة</span></div>
           </div>
           <div class="intro-stat">
             <span>الحصص المطلوبة</span>
             <strong>${totalPeriods()}</strong>
             <small>${totalSections()} شعبة ومقررًا</small>
-            <div class="intro-progress"><i style="width:${Math.min(100, ((state.step + 1) / 4) * 100)}%"></i></div>
-            <b>الخطوة ${state.step + 1} من 4</b>
+            <div class="intro-progress"><i style="width:${Math.min(100, ((state.step + 1) / 3) * 100)}%"></i></div>
+            <b>الخطوة ${state.step + 1} من 3</b>
           </div>
         </section>
         <nav class="step-nav" aria-label="مراحل إعداد الخطة">
-          ${steps.map((label, index) => `<button class="step-item ${state.step === index ? 'active' : index < state.step ? 'completed' : ''}" data-action="step" data-id="${index}" ${state.step === index ? 'aria-current="step"' : ''}><span>${index < state.step ? '✓' : index + 1}</span><b>${label}</b><small>${['بيانات الخطة', 'نطاق التدريس', 'الحصص المطلوبة', 'الاختيار والاعتماد'][index]}</small></button>`).join('')}
+          ${steps.map((label, index) => `<button class="step-item ${state.step === index ? 'active' : index < state.step ? 'completed' : ''}" data-action="step" data-id="${index}" ${state.step === index ? 'aria-current="step"' : ''}><span>${index < state.step ? '✓' : index + 1}</span><b>${label}</b><small>${stepDescriptions[index]}</small></button>`).join('')}
         </nav>
-        ${state.step === 0
-    ? setupPanel()
-    : state.step === 1
-      ? teachersPanel()
-      : state.step === 2 ? requirementsPanel() : resultsPanel()}
+        ${state.step === 0 ? setupPanel() : state.step === 1 ? teachersPanel() : resultsPanel()}
         <div class="footer-nav no-print">
-          <div class="footer-progress"><span>الخطوة ${state.step + 1} من 4</span><strong>${steps[state.step]}</strong></div>
+          <div class="footer-progress"><span>الخطوة ${state.step + 1} من 3</span><strong>${steps[state.step]}</strong></div>
           <div class="footer-actions">
             <button class="button secondary" data-action="prev" ${state.step === 0 ? 'disabled' : ''}><span aria-hidden="true">→</span> السابق</button>
-            <button class="button primary" data-action="next">${state.step < 3 ? 'التالي <span aria-hidden="true">←</span>' : state.resultView === 'draft' && state.draft ? 'اعتماد الخطة' : '✦ ولّد نماذج التوزيع'}</button>
+            <button class="button primary" data-action="next">${state.step < 2 ? 'التالي <span aria-hidden="true">←</span>' : state.resultView === 'draft' && state.draft ? 'اعتماد الخطة' : '✦ ولّد نماذج التوزيع'}</button>
           </div>
         </div>
       </main>
@@ -1159,6 +1400,62 @@ app.addEventListener('input', (event) => {
 });
 
 app.addEventListener('change', (event) => {
+  if (event.target.dataset.planScope !== undefined) {
+    const field = event.target.dataset.planScope;
+    const pending = normalizedPendingScope();
+    if (field === 'teacherCount') pending[field] = Math.max(1, Number(event.target.value) || 1);
+    else pending[field] = event.target.value;
+
+    if (field === 'mode') {
+      if (pending.mode === PLAN_SCOPE_MODE.SINGLE && !pending.subjectId) {
+        pending.subjectId = allSubjectsInActiveRange()[0]?.id || '';
+      }
+      if (pending.mode === PLAN_SCOPE_MODE.DEPARTMENT) {
+        const template = templateById(pending.templateId);
+        pending.selectedSubjectIds = subjectsAvailableInRange(template.subjectIds, activeGradeRange()).map((item) => item.id);
+      }
+    }
+
+    if (field === 'templateId') {
+      const template = templateById(pending.templateId);
+      pending.selectedSubjectIds = subjectsAvailableInRange(template.subjectIds, activeGradeRange()).map((item) => item.id);
+    }
+
+    state.pendingPlanScope = normalizePlanScope(
+      pending,
+      state.data.requirements,
+      state.data.teachers,
+      activeGradeRange(),
+    );
+    render();
+    return;
+  }
+
+  if (event.target.dataset.planScopeCheck !== undefined) {
+    const pending = normalizedPendingScope();
+    pending[event.target.dataset.planScopeCheck] = event.target.checked;
+    state.pendingPlanScope = pending;
+    render();
+    return;
+  }
+
+  if (event.target.dataset.planSubjectId !== undefined) {
+    const pending = normalizedPendingScope();
+    const selectedIds = new Set(pending.selectedSubjectIds);
+    if (event.target.checked) selectedIds.add(event.target.dataset.planSubjectId);
+    else selectedIds.delete(event.target.dataset.planSubjectId);
+    pending.selectedSubjectIds = [...selectedIds];
+    state.pendingPlanScope = pending;
+    render();
+    return;
+  }
+
+  if (event.target.dataset.planLibrarySelect !== undefined) {
+    state.selectedPlanId = event.target.value;
+    render();
+    return;
+  }
+
   if (event.target.dataset.path) {
     updateData(event.target.dataset.path, event.target.value);
     render();
@@ -1182,12 +1479,6 @@ app.addEventListener('change', (event) => {
     else teacherPolicy(teacher)[field] = event.target.value;
     invalidateResults();
     persistRender();
-    return;
-  }
-
-  if (event.target.dataset.subjectTemplate !== undefined) {
-    state.subjectTemplateId = event.target.value;
-    render();
     return;
   }
 
@@ -1230,8 +1521,20 @@ app.addEventListener('click', async (event) => {
 
   if (action === 'next') {
     state.notice = '';
-    if (state.step < 3) {
-      state.step += 1;
+    if (state.step === 0) {
+      const setupNeedsApply = scopeSignature(normalizedPendingScope()) !== scopeSignature(state.data.planScope)
+        || !state.data.requirements.length
+        || !state.data.teachers.length;
+      if (setupNeedsApply) {
+        state.notice = 'اضغط «تهيئة الخطة بالكامل» أولًا لتطبيق المادة وعدد المعلمين والشعب قبل الانتقال.';
+        state.noticeType = 'warning';
+        render();
+        return;
+      }
+      state.step = 1;
+      render();
+    } else if (state.step === 1) {
+      state.step = 2;
       render();
     } else if (state.resultView === 'draft' && state.draft) approveDraft();
     else await generate(false);
@@ -1239,19 +1542,23 @@ app.addEventListener('click', async (event) => {
 
   if (action === 'reset') {
     clearAppData();
+    const data = normalizeAppData(clone(seedData), seedData);
     state = {
       step: 0,
-      data: clone(seedData),
+      data,
+      pendingPlanScope: clone(data.planScope),
+      planLibrary: loadPlanLibrary(),
+      selectedPlanId: '',
       scenarios: [],
       selectedId: 'balanced',
       errors: [],
-      notice: '',
+      notice: 'تمت استعادة مثال العلوم دون حذف الخطط المحفوظة.',
+      noticeType: 'success',
       generating: false,
       generationRound: 0,
       searchStats: { attempts: 0, uniqueFound: 0, completeFound: 0 },
       resultView: 'models',
       draft: null,
-      subjectTemplateId: 'science',
     };
     persistRender();
   }
@@ -1260,19 +1567,49 @@ app.addEventListener('click', async (event) => {
     state.data.teachers.push({
       id: uid(),
       name: '',
-      specialty: '',
+      specialty: currentScopeLabels()[0] || '',
       isLead: false,
       active: true,
       assignmentPolicy: createDefaultAssignmentPolicy(),
     });
+    state.data.planScope.teacherCount = state.data.teachers.length;
+    state.pendingPlanScope = clone(state.data.planScope);
     invalidateResults();
     persistRender();
   }
 
   if (action === 'delete-teacher') {
     state.data.teachers = state.data.teachers.filter((item) => item.id !== button.dataset.id);
+    state.data.planScope.teacherCount = Math.max(1, state.data.teachers.length);
+    state.data.planScope.hasLead = state.data.teachers.some((teacher) => teacher.isLead);
+    state.pendingPlanScope = clone(state.data.planScope);
     invalidateResults();
     persistRender();
+  }
+
+  if (action === 'apply-plan-configuration') applyPlanConfiguration();
+  if (action === 'sync-teacher-count') applyPlanConfiguration({ syncTeachersOnly: true });
+
+  if (action === 'save-plan') {
+    const snapshot = savePlanSnapshot();
+    state.notice = `تم حفظ الخطة «${snapshot.name}» ضمن الخطط المحفوظة.`;
+    state.noticeType = 'success';
+    render();
+  }
+
+  if (action === 'open-plan' && state.selectedPlanId) openSavedPlan(state.selectedPlanId);
+  if (action === 'new-plan') createNewPlan();
+  if (action === 'delete-saved-plan' && state.selectedPlanId) {
+    const record = state.planLibrary.find((item) => item.id === state.selectedPlanId);
+    const accepted = globalThis.confirm?.(`حذف الخطة المحفوظة «${record?.name || 'الخطة'}»؟ لن تُحذف الخطة المفتوحة حاليًا.`) ?? true;
+    if (accepted) {
+      state.planLibrary = state.planLibrary.filter((item) => item.id !== state.selectedPlanId);
+      savePlanLibrary(state.planLibrary);
+      state.selectedPlanId = '';
+      state.notice = 'تم حذف النسخة المحفوظة من مكتبة الخطط، وبقيت الخطة المفتوحة دون تغيير.';
+      state.noticeType = 'success';
+      render();
+    }
   }
 
   if (action === 'copy-policy') {
@@ -1294,46 +1631,34 @@ app.addEventListener('click', async (event) => {
       start: Number(button.dataset.start),
       end: Number(button.dataset.end),
     }, state.data.requirements, { start: 1, end: 12 });
+    state.pendingPlanScope = normalizePlanScope(
+      state.pendingPlanScope,
+      state.data.requirements,
+      state.data.teachers,
+      activeGradeRange(),
+    );
     invalidateResults();
     persistRender();
-  }
-
-  if (action === 'apply-subject-template') {
-    const additions = requirementsForTemplate(
-      state.subjectTemplateId,
-      activeGradeRange(),
-      state.data.settings.schoolShift,
-    );
-    const existing = new Set(state.data.requirements.map((item) => `${item.grade}::${item.subject}`));
-    let added = 0;
-    for (const requirement of additions) {
-      const signature = `${requirement.grade}::${requirement.subject}`;
-      if (existing.has(signature)) continue;
-      state.data.requirements.push({ id: uid(), ...requirement });
-      existing.add(signature);
-      added += 1;
-    }
-    const template = templateById(state.subjectTemplateId);
-    state.notice = added
-      ? `تمت إضافة ${added} صفوف ومواد من قالب ${template.label}. عدّل عدد الشعب فقط.`
-      : `مواد قالب ${template.label} موجودة بالفعل ضمن النطاق الحالي.`;
-    invalidateResults();
-    saveAppData(state.data);
-    render();
   }
 
   if (action === 'add-req') {
     const grade = nextRequirementGrade();
-    const firstSubject = subjectsForGrade(grade, { includeVocational: false })[0]?.label || '';
-    state.data.requirements.push({
-      id: uid(),
-      grade,
-      subject: firstSubject,
-      sections: 1,
-      periodsPerSection: recommendedPeriods(grade, firstSubject, state.data.settings.schoolShift),
-    });
-    invalidateResults();
-    persistRender();
+    const firstSubject = currentScopeLabels()[0] || '';
+    if (!firstSubject) {
+      state.notice = 'هيّئ المادة أو القسم أولًا قبل إضافة صف.';
+      state.noticeType = 'warning';
+      render();
+    } else {
+      state.data.requirements.push({
+        id: uid(),
+        grade,
+        subject: firstSubject,
+        sections: 1,
+        periodsPerSection: recommendedPeriods(grade, firstSubject, state.data.settings.schoolShift),
+      });
+      invalidateResults();
+      persistRender();
+    }
   }
 
   if (action === 'delete-req') {
@@ -1459,6 +1784,17 @@ async function generate(more = false) {
   const outsideRange = outOfRangeRequirements();
   if (outsideRange.length) {
     state.errors.push(`يوجد ${outsideRange.length} مقرر خارج نطاق صفوف المدرسة الحالي. عدّل الصف أو وسّع النطاق أولًا.`);
+  }
+  const outsideScope = requirementsOutsideScope();
+  if (outsideScope.length) {
+    state.errors.push(`يوجد ${outsideScope.length} مقرر من خارج مادة أو قسم الخطة. أعد تهيئة الخطة أولًا.`);
+  }
+  const allowedSpecialties = new Set(currentScopeLabels());
+  const invalidTeachers = state.data.teachers.filter((teacher) => (
+    teacher.active && !allowedSpecialties.has(teacher.specialty)
+  ));
+  if (invalidTeachers.length) {
+    state.errors.push(`يوجد ${invalidTeachers.length} معلم بتخصص خارج مواد الخطة الحالية.`);
   }
 
   if (state.errors.length) {

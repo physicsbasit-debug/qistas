@@ -5,9 +5,11 @@ import {
   POLICY_MODES,
 } from '../domain/assignmentPolicy.js';
 import { normalizeGradeRange } from '../domain/grades.js';
+import { normalizePlanScope } from '../domain/planScope.js';
 
 const STORAGE_KEY = 'qistas:v1';
 const WORKSPACE_KEY = 'qistas:workspace:v1';
+const PLAN_LIBRARY_KEY = 'qistas:plans:v1';
 
 export function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -59,19 +61,25 @@ export function normalizeAppData(data, fallback) {
     ? source.settings
     : {};
 
+  const gradeRange = normalizeGradeRange(source.gradeRange, requirements, fallback.gradeRange || { start: 1, end: 12 });
+  const teachers = Array.isArray(source.teachers)
+    ? source.teachers.map((teacher) => normalizeTeacher(teacher, requirements))
+    : clone(fallback.teachers);
+
   return {
     ...clone(fallback),
     ...source,
-    gradeRange: normalizeGradeRange(source.gradeRange, requirements, fallback.gradeRange || { start: 1, end: 12 }),
+    planId: String(source.planId || fallback.planId || 'legacy-plan'),
+    planName: String(source.planName || source.departmentName || fallback.planName || 'خطة توزيع'),
+    gradeRange,
     settings: {
       teacherMaxLoad: Number(sourceSettings.teacherMaxLoad) || 18,
       leadMaxLoad: Number(sourceSettings.leadMaxLoad) || 12,
       schoolShift: sourceSettings.schoolShift === 'double' ? 'double' : 'single',
     },
-    teachers: Array.isArray(source.teachers)
-      ? source.teachers.map((teacher) => normalizeTeacher(teacher, requirements))
-      : clone(fallback.teachers),
+    teachers,
     requirements,
+    planScope: normalizePlanScope(source.planScope, requirements, teachers, gradeRange),
   };
 }
 
@@ -112,4 +120,21 @@ export function saveWorkspace(workspace) {
 
 export function clearWorkspace() {
   localStorage.removeItem(WORKSPACE_KEY);
+}
+
+export function loadPlanLibrary() {
+  try {
+    const raw = localStorage.getItem(PLAN_LIBRARY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => item && typeof item === 'object' && item.id && item.data)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePlanLibrary(plans) {
+  localStorage.setItem(PLAN_LIBRARY_KEY, JSON.stringify(Array.isArray(plans) ? plans : []));
 }

@@ -23,10 +23,20 @@ const teacher = (id, name, specialty, isLead = false) => ({
 });
 
 export const seedData = {
+  planId: 'science-8-10',
+  planName: 'قسم العلوم 8-10',
   schoolName: 'المدرسة النموذجية',
   departmentName: 'قسم العلوم',
   academicYear: defaultAcademicYear(),
-  gradeRange: { start: 1, end: 12 },
+  gradeRange: { start: 8, end: 10 },
+  planScope: {
+    mode: 'department',
+    templateId: 'science',
+    subjectId: '',
+    selectedSubjectIds: ['general-science', 'physics', 'chemistry', 'biology'],
+    teacherCount: 9,
+    hasLead: true,
+  },
   settings: {
     teacherMaxLoad: 18,
     leadMaxLoad: 12,

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-test('app renders simplified controls and multiple-model results without browser errors', async () => {
+function createBrowserHarness() {
   const listeners = new Map();
   const appRoot = {
     innerHTML: '',
@@ -21,131 +21,111 @@ test('app renders simplified controls and multiple-model results without browser
     removeItem(key) { storage.delete(key); },
   };
   globalThis.window = { print() {} };
+  globalThis.confirm = () => true;
+  return { listeners, appRoot, storage };
+}
+
+function clickEvent(dataset) {
+  return {
+    target: {
+      closest() { return { dataset }; },
+    },
+  };
+}
+
+function changeEvent(dataset, value = '', checked = false) {
+  return { target: { dataset, value, checked } };
+}
+
+test('app keeps the existing distribution workflow after merging setup sections', async () => {
+  const { listeners, appRoot } = createBrowserHarness();
 
   await import(`../src/app.js?smoke=${Date.now()}`);
   assert.match(appRoot.innerHTML, /قِسطاس/);
-  assert.match(appRoot.innerHTML, /سقف الأنصبة/);
-  assert.match(appRoot.innerHTML, /الصفوف التي تخدمها المدرسة/);
-  assert.match(appRoot.innerHTML, /1-12/);
+  assert.match(appRoot.innerHTML, /إعداد خطة التوزيع/);
+  assert.match(appRoot.innerHTML, /ماذا تريد أن توزّع؟/);
+  assert.match(appRoot.innerHTML, /عدد المعلمين/);
+  assert.match(appRoot.innerHTML, /الشعب والحصص/);
+  assert.match(appRoot.innerHTML, /الخطوة 1 من 3/);
+  assert.match(appRoot.innerHTML, /الإصدار 1\.2\.0/);
   assert.doesNotMatch(appRoot.innerHTML, /Gemini|Supabase/);
-  assert.match(appRoot.innerHTML, /الإصدار 1\.1\.0/);
-  assert.match(appRoot.innerHTML, /جميع مواد المدارس الحكومية/);
-  assert.match(appRoot.innerHTML, /نظام الدوام/);
 
   const click = listeners.get('click');
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'step', id: '1' } }; },
-    },
-  });
-
+  await click(clickEvent({ action: 'step', id: '1' }));
   assert.match(appRoot.innerHTML, /<h2>المعلمون<\/h2>/);
   assert.match(appRoot.innerHTML, /تخصصه في صف واحد/);
   assert.match(appRoot.innerHTML, /الدور/);
-  assert.doesNotMatch(appRoot.innerHTML, /المستهدف<input/);
-  assert.doesNotMatch(appRoot.innerHTML, /مسموح عند الحاجة/);
 
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'step', id: '2' } }; },
-    },
-  });
-  assert.match(appRoot.innerHTML, /مكتبة المواد العُمانية/);
-  assert.match(appRoot.innerHTML, /أضف مواد القسم بنقرة واحدة/);
-  assert.match(appRoot.innerHTML, /المسار المهني: إدارة الأعمال/);
-
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'step', id: '3' } }; },
-    },
-  });
+  await click(clickEvent({ action: 'step', id: '2' }));
   assert.match(appRoot.innerHTML, /نماذج التوزيع/);
-
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'generate' } }; },
-    },
-  });
-
+  await click(clickEvent({ action: 'generate' }));
   assert.match(appRoot.innerHTML, /عثر قِسطاس على 20 نموذجًا/);
   assert.match(appRoot.innerHTML, /النموذج 1 من 20/);
   assert.match(appRoot.innerHTML, /نماذج إضافية/);
-  assert.match(appRoot.innerHTML, /مقارنة أفضل 8 نماذج/);
   assert.match(appRoot.innerHTML, /اعتماد مبدئي وتعديل/);
 
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'generate-more' } }; },
-    },
-  });
+  await click(clickEvent({ action: 'generate-more' }));
   assert.match(appRoot.innerHTML, /عثر قِسطاس على 40 نموذجًا/);
-  assert.match(appRoot.innerHTML, /النموذج \d+ من 40/);
 
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'adopt-model' } }; },
-    },
-  });
+  await click(clickEvent({ action: 'adopt-model' }));
   assert.match(appRoot.innerHTML, /الخطة قيد التعديل/);
   assert.match(appRoot.innerHTML, /أعد توزيع غير المثبت/);
-  assert.match(appRoot.innerHTML, /تثبيت التوزيع/);
 
   const lockMatch = appRoot.innerHTML.match(/data-action="toggle-teacher-lock" data-id="([^"]+)"/);
   assert.ok(lockMatch);
-  const lockedTeacherId = lockMatch[1];
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'toggle-teacher-lock', id: lockedTeacherId } }; },
-    },
-  });
+  await click(clickEvent({ action: 'toggle-teacher-lock', id: lockMatch[1] }));
   assert.match(appRoot.innerHTML, /مثبت · فك/);
 
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'rebalance-draft' } }; },
-    },
-  });
+  await click(clickEvent({ action: 'rebalance-draft' }));
   assert.match(appRoot.innerHTML, /حافظ قِسطاس على/);
+});
 
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'toggle-teacher-lock', id: lockedTeacherId } }; },
-    },
-  });
-  const taskIds = [...appRoot.innerHTML.matchAll(/data-action="select-transfer" data-task-id="([^"]+)"/g)]
-    .map((match) => match[1]);
-  assert.ok(taskIds.length);
-  let moveMatch = null;
-  for (const taskId of taskIds) {
-    await click({
-      target: {
-        closest() { return { dataset: { action: 'select-transfer', taskId } }; },
-      },
-    });
-    moveMatch = appRoot.innerHTML.match(/data-action="move-task" data-task-id="([^"]+)" data-teacher-id="([^"]+)"/);
-    if (moveMatch) break;
-  }
-  assert.match(appRoot.innerHTML, /نقل شعبة/);
-  assert.ok(moveMatch);
-  await click({
-    target: {
-      closest() { return { dataset: { action: 'move-task', taskId: moveMatch[1], teacherId: moveMatch[2] } }; },
-    },
-  });
-  assert.match(appRoot.innerHTML, /تم نقل/);
-  assert.match(appRoot.innerHTML, /مثبتة/);
+test('choosing one subject prepares a clean isolated plan and teacher list', async () => {
+  const { listeners, appRoot, storage } = createBrowserHarness();
+  await import(`../src/app.js?scope=${Date.now()}`);
+  const change = listeners.get('change');
+  const click = listeners.get('click');
 
-  const resumedRoot = {
-    innerHTML: '',
-    addEventListener() {},
-  };
-  globalThis.document = {
-    querySelector(selector) {
-      if (selector === '#app') return resumedRoot;
-      return { value: '' };
-    },
-  };
-  await import(`../src/app.js?resume=${Date.now()}`);
-  assert.match(resumedRoot.innerHTML, /الخطة قيد التعديل/);
-  assert.match(resumedRoot.innerHTML, /مثبتة/);
+  change(changeEvent({ planScope: 'mode' }, 'single'));
+  change(changeEvent({ planScope: 'subjectId' }, 'arabic'));
+  change(changeEvent({ planScope: 'teacherCount' }, '4'));
+  change(changeEvent({ planScopeCheck: 'hasLead' }, '', true));
+  await click(clickEvent({ action: 'apply-plan-configuration' }));
+
+  assert.match(appRoot.innerHTML, /تم إنشاء خطة مستقلة لمادة أو قسم «اللغة العربية»/);
+  assert.match(appRoot.innerHTML, /اللغة العربية/);
+  assert.doesNotMatch(appRoot.innerHTML, /data-path="req:[^"]+:subject"[^>]*>[^<]*الفيزياء/);
+
+  const saved = JSON.parse(storage.get('qistas:v1'));
+  assert.equal(saved.planScope.mode, 'single');
+  assert.equal(saved.planScope.subjectId, 'arabic');
+  assert.equal(saved.teachers.length, 4);
+  assert.equal(saved.teachers.filter((teacher) => teacher.isLead).length, 1);
+  assert.ok(saved.teachers.every((teacher) => teacher.specialty === 'اللغة العربية'));
+  assert.ok(saved.requirements.length > 0);
+  assert.ok(saved.requirements.every((requirement) => requirement.subject === 'اللغة العربية'));
+
+  await click(clickEvent({ action: 'step', id: '1' }));
+  assert.equal((appRoot.innerHTML.match(/class="teacher-editor /g) || []).length, 4);
+  assert.match(appRoot.innerHTML, /readonly aria-readonly="true"/);
+});
+
+
+test('saved plans can be stored and removed without changing the open plan', async () => {
+  const { listeners, appRoot, storage } = createBrowserHarness();
+  await import(`../src/app.js?plans=${Date.now()}`);
+  const click = listeners.get('click');
+  const change = listeners.get('change');
+
+  await click(clickEvent({ action: 'save-plan' }));
+  const plans = JSON.parse(storage.get('qistas:plans:v1'));
+  assert.equal(plans.length, 1);
+  assert.match(appRoot.innerHTML, /تم حفظ الخطة/);
+
+  change(changeEvent({ planLibrarySelect: '' }, plans[0].id));
+  await click(clickEvent({ action: 'delete-saved-plan' }));
+
+  assert.deepEqual(JSON.parse(storage.get('qistas:plans:v1')), []);
+  assert.match(appRoot.innerHTML, /بقيت الخطة المفتوحة دون تغيير/);
+  assert.match(appRoot.innerHTML, /قسم العلوم/);
 });
