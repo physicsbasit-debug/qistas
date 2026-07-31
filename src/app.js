@@ -179,11 +179,14 @@ function setPolicyMode(teacher, mode) {
 
 function setupPanel() {
   return `
-    <section class="panel stack-lg">
-      <div>
-        <p class="eyebrow">الخطوة الأولى</p>
-        <h2>بيانات الخطة</h2>
-        <p class="muted">أدخل اسم المدرسة واضبط سقف النصاب مرة واحدة. التطبيق يتولى الموازنة، فلا حاجة لهدف وأدنى وأعلى لكل معلم.</p>
+    <section class="panel page-panel stack-lg">
+      <div class="panel-intro">
+        <span class="panel-icon" aria-hidden="true">١</span>
+        <div>
+          <p class="eyebrow">الخطوة الأولى</p>
+          <h2>بيانات الخطة</h2>
+          <p class="muted">أدخل بيانات القسم واضبط سقف النصاب مرة واحدة، ثم اترك الحسابات الثقيلة لقِسطاس.</p>
+        </div>
       </div>
 
       <div class="form-grid three">
@@ -212,12 +215,12 @@ function setupPanel() {
       </div>
 
       <div class="kpi-grid">
-        <article class="kpi"><span>المعلمون النشطون</span><strong>${state.data.teachers.filter((teacher) => teacher.active).length}</strong></article>
-        <article class="kpi"><span>الشعب والمقررات</span><strong>${totalSections()}</strong></article>
-        <article class="kpi"><span>إجمالي الحصص</span><strong>${totalPeriods()}</strong></article>
+        <article class="kpi kpi-teachers"><span>المعلمون النشطون</span><strong>${state.data.teachers.filter((teacher) => teacher.active).length}</strong><small>ضمن الخطة الحالية</small></article>
+        <article class="kpi kpi-sections"><span>الشعب والمقررات</span><strong>${totalSections()}</strong><small>تكليفًا مطلوبًا</small></article>
+        <article class="kpi kpi-periods"><span>إجمالي الحصص</span><strong>${totalPeriods()}</strong><small>حصة أسبوعية</small></article>
       </div>
 
-      <div class="note">البيانات ومحركات التوزيع تعمل محليًا داخل المتصفح، دون حساب خارجي أو اتصال سحابي.</div>
+      <div class="note"><span class="note-icon" aria-hidden="true">✓</span><span>تُحفظ بياناتك تلقائيًا على هذا الجهاز، ويعمل محرك التوزيع محليًا دون اتصال سحابي.</span></div>
     </section>`;
 }
 
@@ -290,21 +293,21 @@ function policyContext(teacher) {
   return '';
 }
 
-function teacherEditor(teacher) {
+function teacherEditor(teacher, index) {
   const policy = teacherPolicy(teacher);
   return `
     <article class="teacher-editor ${teacher.active ? '' : 'inactive'}">
       <header class="teacher-editor-header">
         <div class="teacher-title">
-          <span class="teacher-avatar">${esc((teacher.name || 'م').trim().slice(0, 1))}</span>
+          <span class="teacher-avatar">${esc((teacher.name || 'م').trim().slice(0, 1))}<small>${index + 1}</small></span>
           <div>
             <strong>${esc(teacher.name || 'معلم جديد')}</strong>
-            <small>${esc(teacher.specialty || 'لم يحدد التخصص')}${teacher.isLead ? ' · معلم أول' : ''}</small>
+            <div class="teacher-meta"><span>${esc(teacher.specialty || 'لم يحدد التخصص')}</span><span class="role-badge ${teacher.isLead ? 'lead' : ''}">${teacher.isLead ? 'معلم أول' : 'معلم'}</span></div>
           </div>
         </div>
         <div class="teacher-header-actions">
-          <label class="switch-label"><input type="checkbox" data-check="teacher:${teacher.id}:active" ${teacher.active ? 'checked' : ''}> نشط</label>
-          <button class="icon-button danger" title="حذف المعلم" data-action="delete-teacher" data-id="${teacher.id}">×</button>
+          <label class="switch-label"><input type="checkbox" data-check="teacher:${teacher.id}:active" ${teacher.active ? 'checked' : ''}><span class="switch-track" aria-hidden="true"></span><span>نشط</span></label>
+          <button class="icon-button danger" title="حذف المعلم" aria-label="حذف المعلم" data-action="delete-teacher" data-id="${teacher.id}">×</button>
         </div>
       </header>
 
@@ -334,7 +337,7 @@ function teacherEditor(teacher) {
             <small>سيُسند إليه</small>
             <strong>${esc(describeAssignmentPolicy(teacher, state.data.requirements))}</strong>
           </div>
-          <button class="text-button compact" data-action="copy-policy" data-id="${teacher.id}">تطبيق على معلمي ${esc(teacher.specialty || 'التخصص نفسه')}</button>
+          <button class="text-button compact copy-policy-button" data-action="copy-policy" data-id="${teacher.id}">تطبيق على معلمي ${esc(teacher.specialty || 'التخصص نفسه')}</button>
         </div>
         ${policyContext(teacher)}
       </div>
@@ -343,14 +346,17 @@ function teacherEditor(teacher) {
 
 function teachersPanel() {
   return `
-    <section class="panel stack-lg">
+    <section class="panel page-panel stack-lg">
       <div class="section-heading">
-        <div>
-          <p class="eyebrow">الخطوة الثانية</p>
-          <h2>المعلمون</h2>
-          <p class="muted">لكل معلم اختر طريقة واحدة فقط. لا توجد أهداف نصاب ولا ثلاثة حدود تلاحقك في كل بطاقة.</p>
+        <div class="panel-intro">
+          <span class="panel-icon" aria-hidden="true">٢</span>
+          <div>
+            <p class="eyebrow">الخطوة الثانية</p>
+            <h2>المعلمون</h2>
+            <p class="muted">اختر لكل معلم نطاقًا واضحًا، وقِسطاس يتولى الموازنة ضمنه.</p>
+          </div>
         </div>
-        <button class="button secondary" data-action="add-teacher">إضافة معلم</button>
+        <button class="button secondary" data-action="add-teacher"><span aria-hidden="true">＋</span> إضافة معلم</button>
       </div>
       ${state.notice ? `<div class="alert success">${esc(state.notice)}</div>` : ''}
       <div class="teacher-editor-list">
@@ -361,14 +367,17 @@ function teachersPanel() {
 
 function requirementsPanel() {
   return `
-    <section class="panel stack-lg">
+    <section class="panel page-panel stack-lg">
       <div class="section-heading">
-        <div>
-          <p class="eyebrow">الخطوة الثالثة</p>
-          <h2>الصفوف والمواد</h2>
-          <p class="muted">كل سطر يحدد صفًا ومادة وعدد الشعب وحصص كل شعبة.</p>
+        <div class="panel-intro">
+          <span class="panel-icon" aria-hidden="true">٣</span>
+          <div>
+            <p class="eyebrow">الخطوة الثالثة</p>
+            <h2>الصفوف والمواد</h2>
+            <p class="muted">أدخل عدد الشعب والحصص، وستتحدث الإجماليات فورًا.</p>
+          </div>
         </div>
-        <button class="button secondary" data-action="add-req">إضافة صف ومادة</button>
+        <button class="button secondary" data-action="add-req"><span aria-hidden="true">＋</span> إضافة صف ومادة</button>
       </div>
       <div class="table-wrap compact-table">
         <table>
@@ -376,12 +385,12 @@ function requirementsPanel() {
           <tbody>
             ${state.data.requirements.map((requirement) => `
               <tr>
-                <td><input data-path="req:${requirement.id}:grade" value="${esc(requirement.grade)}"></td>
-                <td><input data-path="req:${requirement.id}:subject" value="${esc(requirement.subject)}"></td>
-                <td><input class="number" type="number" min="1" data-path="req:${requirement.id}:sections" value="${requirement.sections}"></td>
-                <td><input class="number" type="number" min="1" data-path="req:${requirement.id}:periodsPerSection" value="${requirement.periodsPerSection}"></td>
-                <td><strong>${Number(requirement.sections) * Number(requirement.periodsPerSection)}</strong></td>
-                <td><button class="icon-button danger" data-action="delete-req" data-id="${requirement.id}">×</button></td>
+                <td data-label="الصف"><input data-path="req:${requirement.id}:grade" value="${esc(requirement.grade)}"></td>
+                <td data-label="المادة"><input data-path="req:${requirement.id}:subject" value="${esc(requirement.subject)}"></td>
+                <td data-label="عدد الشعب"><input class="number" type="number" min="1" data-path="req:${requirement.id}:sections" value="${requirement.sections}"></td>
+                <td data-label="حصص الشعبة"><input class="number" type="number" min="1" data-path="req:${requirement.id}:periodsPerSection" value="${requirement.periodsPerSection}"></td>
+                <td data-label="الإجمالي"><strong class="row-total">${Number(requirement.sections) * Number(requirement.periodsPerSection)}</strong></td>
+                <td class="row-action"><button class="icon-button danger" data-action="delete-req" data-id="${requirement.id}">×</button></td>
               </tr>`).join('')}
           </tbody>
         </table>
@@ -613,8 +622,8 @@ function draftPanel() {
             <h2>${esc(state.data.schoolName)} · ${esc(state.data.departmentName)}</h2>
           </div>
           <div class="actions no-print">
-            <button class="button secondary" data-action="export-draft">تصدير Excel منسق</button>
-            <button class="button secondary" data-action="print">تقرير PDF رسمي</button>
+            <button class="button secondary" data-action="export-draft"><span aria-hidden="true">⇩</span> تصدير Excel</button>
+            <button class="button secondary" data-action="print"><span aria-hidden="true">▤</span> تقرير PDF</button>
           </div>
         </div>
 
@@ -688,8 +697,8 @@ function modelResultsPanel() {
         </div>
         <div class="actions no-print">
           <button class="button primary" data-action="adopt-model">اعتماد مبدئي وتعديل</button>
-          <button class="button secondary" data-action="export">تصدير Excel منسق</button>
-          <button class="button secondary" data-action="print">تقرير PDF رسمي</button>
+          <button class="button secondary" data-action="export"><span aria-hidden="true">⇩</span> تصدير Excel</button>
+          <button class="button secondary" data-action="print"><span aria-hidden="true">▤</span> تقرير PDF</button>
         </div>
       </div>
 
@@ -737,15 +746,18 @@ function modelResultsPanel() {
 
   return `
     <section class="stack-lg">
-      <div class="panel hero-result">
-        <div>
-          <p class="eyebrow">الخطوة الرابعة</p>
-          <h2>نماذج التوزيع</h2>
-          <p class="muted">ينشئ قِسطاس أكبر مجموعة عملية من الحلول الصحيحة والمختلفة، ثم يرتبها ويترك الاختيار لك.</p>
+      <div class="panel page-panel hero-result">
+        <div class="panel-intro">
+          <span class="panel-icon" aria-hidden="true">٤</span>
+          <div>
+            <p class="eyebrow">الخطوة الرابعة</p>
+            <h2>نماذج التوزيع</h2>
+            <p class="muted">يبحث قِسطاس عن حلول متعددة، يرتبها، ويترك القرار النهائي لك.</p>
+          </div>
         </div>
         <div class="actions no-print">
           ${state.draft ? '<button class="button secondary" data-action="view-draft">فتح الخطة قيد التعديل</button>' : ''}
-          <button class="button primary" data-action="generate" ${state.generating ? 'disabled' : ''}>${state.generating ? 'جارٍ البحث عن النماذج…' : 'ولّد نماذج التوزيع'}</button>
+          <button class="button primary" data-action="generate" ${state.generating ? 'disabled' : ''}>${state.generating ? 'جارٍ البحث عن النماذج…' : '✦ ولّد نماذج التوزيع'}</button>
         </div>
       </div>
 
@@ -941,23 +953,35 @@ async function rebalanceDraft() {
 function render() {
   const steps = ['الإعداد', 'المعلمون', 'الصفوف والمواد', 'التوزيع'];
   app.innerHTML = `
-    <div class="app-shell">
+    <div class="app-shell step-${state.step}">
       <header class="app-header">
-        <div class="brand-mark">ق</div>
-        <div class="brand-copy"><p>قِسطاس</p><span>أنصبة موزونة، توزيع أذكى</span></div>
-        <div class="header-actions"><button class="text-button" data-action="reset">استعادة المثال</button></div>
+        <div class="brand-lockup">
+          <div class="brand-mark">ق</div>
+          <div class="brand-copy"><p>قِسطاس</p><span>أنصبة موزونة، توزيع أذكى</span></div>
+        </div>
+        <div class="header-actions">
+          <span class="save-status"><i></i> محفوظ تلقائيًا</span>
+          <button class="text-button reset-button" data-action="reset"><span aria-hidden="true">↻</span> استعادة المثال</button>
+        </div>
       </header>
       <main>
         <section class="intro">
-          <div>
-            <span class="status-pill">الإصدار 0.7.0 · تقرير رسمي منظم</span>
-            <h1>حدّد من يدرّس ماذا.<br>وقِسطاس يوزّع الباقي.</h1>
-            <p>حدّد نطاق كل معلم فقط. قِسطاس يبحث عن نماذج صحيحة ومتنوعة، ثم يعرضها مرتبة لتختار الأنسب.</p>
+          <div class="intro-content">
+            <span class="status-pill">الإصدار 0.9.0 · واجهة أكثر هدوءًا ووضوحًا</span>
+            <h1>وزّع الأنصبة بثقة،<br><em>من دون زحمة.</em></h1>
+            <p>أدخل بياناتك في أربع خطوات واضحة، ثم اختر من نماذج توزيع صحيحة ومتوازنة.</p>
+            <div class="hero-features"><span>✓ يعمل محليًا</span><span>✓ نماذج متعددة</span><span>✓ حفظ تلقائي</span></div>
           </div>
-          <div class="intro-stat"><span>الحصص المطلوبة</span><strong>${totalPeriods()}</strong><small>${totalSections()} شعبة ومقررًا</small></div>
+          <div class="intro-stat">
+            <span>الحصص المطلوبة</span>
+            <strong>${totalPeriods()}</strong>
+            <small>${totalSections()} شعبة ومقررًا</small>
+            <div class="intro-progress"><i style="width:${Math.min(100, ((state.step + 1) / 4) * 100)}%"></i></div>
+            <b>الخطوة ${state.step + 1} من 4</b>
+          </div>
         </section>
-        <nav class="step-nav">
-          ${steps.map((label, index) => `<button class="step-item ${state.step === index ? 'active' : ''}" data-action="step" data-id="${index}"><span>${index + 1}</span>${label}</button>`).join('')}
+        <nav class="step-nav" aria-label="مراحل إعداد الخطة">
+          ${steps.map((label, index) => `<button class="step-item ${state.step === index ? 'active' : index < state.step ? 'completed' : ''}" data-action="step" data-id="${index}" ${state.step === index ? 'aria-current="step"' : ''}><span>${index < state.step ? '✓' : index + 1}</span><b>${label}</b><small>${['بيانات الخطة', 'نطاق التدريس', 'الحصص المطلوبة', 'الاختيار والاعتماد'][index]}</small></button>`).join('')}
         </nav>
         ${state.step === 0
     ? setupPanel()
@@ -965,8 +989,11 @@ function render() {
       ? teachersPanel()
       : state.step === 2 ? requirementsPanel() : resultsPanel()}
         <div class="footer-nav no-print">
-          <button class="button secondary" data-action="prev" ${state.step === 0 ? 'disabled' : ''}>السابق</button>
-          <button class="button primary" data-action="next">${state.step < 3 ? 'التالي' : state.resultView === 'draft' && state.draft ? 'اعتماد الخطة' : 'ولّد نماذج التوزيع'}</button>
+          <div class="footer-progress"><span>الخطوة ${state.step + 1} من 4</span><strong>${steps[state.step]}</strong></div>
+          <div class="footer-actions">
+            <button class="button secondary" data-action="prev" ${state.step === 0 ? 'disabled' : ''}><span aria-hidden="true">→</span> السابق</button>
+            <button class="button primary" data-action="next">${state.step < 3 ? 'التالي <span aria-hidden="true">←</span>' : state.resultView === 'draft' && state.draft ? 'اعتماد الخطة' : '✦ ولّد نماذج التوزيع'}</button>
+          </div>
         </div>
       </main>
     </div>`;

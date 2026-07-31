@@ -57,7 +57,7 @@ test('Excel package contains three readable RTL worksheets', () => {
 
 test('app exposes Excel export instead of CSV export', async () => {
   const source = await readFile(new URL('../src/app.js', import.meta.url), 'utf8');
-  assert.match(source, /تصدير Excel منسق/);
+  assert.match(source, /تصدير Excel/);
   assert.match(source, /exportScenarioExcel/);
   assert.doesNotMatch(source, /تصدير CSV/);
   assert.doesNotMatch(source, /exportScenarioCsv/);
