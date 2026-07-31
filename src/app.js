@@ -36,6 +36,16 @@ import {
   gradesInRange,
   normalizeGradeRange,
 } from './domain/grades.js';
+import {
+  allSubjectLabels,
+  DEPARTMENT_TEMPLATES,
+  recommendedPeriods,
+  requirementsForTemplate,
+  SCHOOL_SHIFT,
+  subjectByLabel,
+  subjectsForGrade,
+  templateById,
+} from './domain/subjects.js';
 
 const app = document.querySelector('#app');
 const MODEL_BATCH_SIZE = 20;
@@ -55,6 +65,7 @@ let state = {
   searchStats: { attempts: 0, uniqueFound: 0, completeFound: 0 },
   resultView: storedWorkspace?.draft ? 'draft' : 'models',
   draft: storedWorkspace?.draft ?? null,
+  subjectTemplateId: 'science',
 };
 
 const esc = (value = '') => String(value).replace(
@@ -161,7 +172,9 @@ function updateData(path, value) {
   }
 
   if (kind === 'settings') {
-    state.data.settings[field] = Number(value);
+    state.data.settings[field] = field === 'schoolShift'
+      ? String(value || SCHOOL_SHIFT.SINGLE)
+      : Number(value);
   }
 
   if (kind === 'teacher') {
@@ -177,6 +190,20 @@ function updateData(path, value) {
     requirement[field] = ['sections', 'periodsPerSection'].includes(field)
       ? Number(value)
       : value;
+    if (field === 'grade' && subjectByLabel(requirement.subject)) {
+      requirement.periodsPerSection = recommendedPeriods(
+        requirement.grade,
+        requirement.subject,
+        state.data.settings.schoolShift,
+      );
+    }
+    if (field === 'subject' && subjectByLabel(value)) {
+      requirement.periodsPerSection = recommendedPeriods(
+        requirement.grade,
+        value,
+        state.data.settings.schoolShift,
+      );
+    }
   }
 
   invalidateResults();
@@ -283,15 +310,21 @@ function setupPanel() {
         <div class="grade-range-summary"><span>النطاق الحالي</span><strong>${esc(gradeRangeLabel(activeGradeRange()))}</strong></div>
       </div>
 
-      <div class="simple-settings">
+      <div class="simple-settings curriculum-settings">
         <div>
-          <strong>سقف الأنصبة</strong>
-          <p class="muted">إعداد عام، ويمكن تغييره في أي وقت.</p>
+          <strong>إعدادات المدرسة</strong>
+          <p class="muted">اختر نظام الدوام لتظهر الحصص المقترحة، واضبط سقف الأنصبة مرة واحدة.</p>
         </div>
-        <label>المعلم
+        <label>نظام الدوام
+          <select data-path="settings::schoolShift">
+            <option value="single" ${state.data.settings.schoolShift === SCHOOL_SHIFT.SINGLE ? 'selected' : ''}>فترة واحدة</option>
+            <option value="double" ${state.data.settings.schoolShift === SCHOOL_SHIFT.DOUBLE ? 'selected' : ''}>فترتان</option>
+          </select>
+        </label>
+        <label>سقف المعلم
           <input type="number" min="1" data-path="settings::teacherMaxLoad" value="${state.data.settings.teacherMaxLoad}">
         </label>
-        <label>المعلم الأول
+        <label>سقف المعلم الأول
           <input type="number" min="1" data-path="settings::leadMaxLoad" value="${state.data.settings.leadMaxLoad}">
         </label>
       </div>
@@ -398,7 +431,7 @@ function teacherEditor(teacher, index) {
           <input data-path="teacher:${teacher.id}:name" value="${esc(teacher.name)}">
         </label>
         <label>التخصص
-          <input data-path="teacher:${teacher.id}:specialty" value="${esc(teacher.specialty)}">
+          <input list="qistas-subject-specialties" data-path="teacher:${teacher.id}:specialty" value="${esc(teacher.specialty)}" placeholder="اختر أو اكتب تخصصًا">
         </label>
         <label>الدور
           <select data-path="teacher:${teacher.id}:isLead">
@@ -447,7 +480,16 @@ function teachersPanel() {
     </section>`;
 }
 
+function subjectSuggestions(requirement) {
+  const catalog = subjectsForGrade(requirement.grade);
+  return `
+    <datalist id="subjects-${esc(requirement.id)}">
+      ${catalog.map((item) => `<option value="${esc(item.label)}">${esc(item.category)}${item.optional ? ' · اختياري' : ''}</option>`).join('')}
+    </datalist>`;
+}
+
 function requirementsPanel() {
+  const template = templateById(state.subjectTemplateId);
   return `
     <section class="panel page-panel stack-lg">
       <div class="section-heading">
@@ -456,29 +498,58 @@ function requirementsPanel() {
           <div>
             <p class="eyebrow">الخطوة الثالثة</p>
             <h2>الصفوف والمواد</h2>
-            <p class="muted">اختر أي صف من نطاق مدرستك، من الأول حتى الثاني عشر، ثم أدخل المادة وعدد الشعب والحصص.</p>
+            <p class="muted">اختر من مكتبة المواد العُمانية أو اكتب أي مادة مخصصة، ثم أدخل عدد الشعب فقط.</p>
           </div>
         </div>
         <button class="button secondary" data-action="add-req"><span aria-hidden="true">＋</span> إضافة صف ومادة</button>
       </div>
+
+      <div class="subject-library-card">
+        <div class="subject-library-copy">
+          <span class="library-icon" aria-hidden="true">م</span>
+          <div>
+            <p class="eyebrow">مكتبة المواد العُمانية</p>
+            <h3>أضف مواد القسم بنقرة واحدة</h3>
+            <p class="muted">تشمل مواد التعليم العام من الأول إلى الثاني عشر، والمواد الاختيارية والمسارات المهنية. الحصص المقترحة قابلة للتعديل.</p>
+          </div>
+        </div>
+        <div class="subject-library-actions">
+          <label>القسم أو مجموعة المواد
+            <select data-subject-template>
+              ${DEPARTMENT_TEMPLATES.map((item) => `<option value="${item.id}" ${item.id === state.subjectTemplateId ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
+            </select>
+          </label>
+          <button class="button primary" data-action="apply-subject-template">إضافة مواد ${esc(template.label)}</button>
+        </div>
+        <div class="library-footnote"><span>النطاق: ${esc(gradeRangeLabel(activeGradeRange()))}</span><span>الدوام: ${state.data.settings.schoolShift === SCHOOL_SHIFT.DOUBLE ? 'فترتان' : 'فترة واحدة'}</span><span>لا تُضاف الصفوف أو المواد المكررة</span></div>
+      </div>
+
+      ${state.notice ? `<div class="alert success">${esc(state.notice)}</div>` : ''}
       <div class="table-wrap compact-table">
         <table>
           <thead><tr><th>الصف</th><th>المادة</th><th>عدد الشعب</th><th>حصص الشعبة</th><th>الإجمالي</th><th></th></tr></thead>
           <tbody>
-            ${state.data.requirements.map((requirement) => `
+            ${state.data.requirements.map((requirement) => {
+    const official = subjectByLabel(requirement.subject);
+    return `
               <tr>
                 <td data-label="الصف"><select data-path="req:${requirement.id}:grade">${gradeOptions(requirement.grade)}</select></td>
-                <td data-label="المادة"><input data-path="req:${requirement.id}:subject" value="${esc(requirement.subject)}"></td>
+                <td data-label="المادة" class="subject-cell">
+                  <input list="subjects-${esc(requirement.id)}" data-path="req:${requirement.id}:subject" value="${esc(requirement.subject)}" placeholder="اختر أو اكتب مادة">
+                  ${subjectSuggestions(requirement)}
+                  <small class="subject-source ${official ? '' : 'custom'}">${official ? `${esc(official.category)}${official.optional ? ' · اختياري' : ''}` : 'مادة مخصصة'}</small>
+                </td>
                 <td data-label="عدد الشعب"><input class="number" type="number" min="1" data-path="req:${requirement.id}:sections" value="${requirement.sections}"></td>
                 <td data-label="حصص الشعبة"><input class="number" type="number" min="1" data-path="req:${requirement.id}:periodsPerSection" value="${requirement.periodsPerSection}"></td>
                 <td data-label="الإجمالي"><strong class="row-total">${Number(requirement.sections) * Number(requirement.periodsPerSection)}</strong></td>
                 <td class="row-action"><button class="icon-button danger" data-action="delete-req" data-id="${requirement.id}">×</button></td>
-              </tr>`).join('')}
+              </tr>`;
+  }).join('')}
           </tbody>
         </table>
       </div>
       ${outOfRangeRequirements().length ? `<div class="alert warning">يوجد ${outOfRangeRequirements().length} مقرر خارج نطاق المدرسة الحالي. وسّع النطاق أو عدّل الصف قبل التوزيع.</div>` : ''}
-      <div class="note">النطاق يسهّل الاختيار فقط ولا يحذف بياناتك. بعد تغيير الصفوف أو المواد، راجع المعلمين الذين اخترت لهم صفًا أو مادة محددين.</div>
+      <div class="note">القائمة الرسمية وسيلة مساعدة وليست قيدًا: يمكنك تعديل عدد الحصص، أو إضافة أي مادة أو برنامج خاص بالمدرسة.</div>
     </section>`;
 }
 
@@ -1047,13 +1118,14 @@ function render() {
           <button class="text-button reset-button" data-action="reset"><span aria-hidden="true">↻</span> استعادة المثال</button>
         </div>
       </header>
+      <datalist id="qistas-subject-specialties">${allSubjectLabels().map((label) => `<option value="${esc(label)}"></option>`).join('')}</datalist>
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.0.0 · يدعم المدارس من الصف الأول إلى الثاني عشر</span>
+            <span class="status-pill">الإصدار 1.1.0 · جميع مواد المدارس الحكومية</span>
             <h1>وزّع الأنصبة بثقة،<br><em>من دون زحمة.</em></h1>
-            <p>أدخل بيانات أي مدرسة من الصف الأول إلى الثاني عشر في أربع خطوات واضحة، ثم اختر من نماذج توزيع صحيحة ومتوازنة.</p>
-            <div class="hero-features"><span>✓ الصفوف 1-12</span><span>✓ نماذج متعددة</span><span>✓ حفظ تلقائي</span></div>
+            <p>اختر الصفوف والمواد من المكتبة العُمانية، وأدخل المعلمين والشعب، ثم اختر من نماذج توزيع صحيحة ومتوازنة.</p>
+            <div class="hero-features"><span>✓ جميع المواد</span><span>✓ الصفوف 1-12</span><span>✓ نماذج متعددة</span></div>
           </div>
           <div class="intro-stat">
             <span>الحصص المطلوبة</span>
@@ -1110,6 +1182,12 @@ app.addEventListener('change', (event) => {
     else teacherPolicy(teacher)[field] = event.target.value;
     invalidateResults();
     persistRender();
+    return;
+  }
+
+  if (event.target.dataset.subjectTemplate !== undefined) {
+    state.subjectTemplateId = event.target.value;
+    render();
     return;
   }
 
@@ -1173,6 +1251,7 @@ app.addEventListener('click', async (event) => {
       searchStats: { attempts: 0, uniqueFound: 0, completeFound: 0 },
       resultView: 'models',
       draft: null,
+      subjectTemplateId: 'science',
     };
     persistRender();
   }
@@ -1219,13 +1298,39 @@ app.addEventListener('click', async (event) => {
     persistRender();
   }
 
+  if (action === 'apply-subject-template') {
+    const additions = requirementsForTemplate(
+      state.subjectTemplateId,
+      activeGradeRange(),
+      state.data.settings.schoolShift,
+    );
+    const existing = new Set(state.data.requirements.map((item) => `${item.grade}::${item.subject}`));
+    let added = 0;
+    for (const requirement of additions) {
+      const signature = `${requirement.grade}::${requirement.subject}`;
+      if (existing.has(signature)) continue;
+      state.data.requirements.push({ id: uid(), ...requirement });
+      existing.add(signature);
+      added += 1;
+    }
+    const template = templateById(state.subjectTemplateId);
+    state.notice = added
+      ? `تمت إضافة ${added} صفوف ومواد من قالب ${template.label}. عدّل عدد الشعب فقط.`
+      : `مواد قالب ${template.label} موجودة بالفعل ضمن النطاق الحالي.`;
+    invalidateResults();
+    saveAppData(state.data);
+    render();
+  }
+
   if (action === 'add-req') {
+    const grade = nextRequirementGrade();
+    const firstSubject = subjectsForGrade(grade, { includeVocational: false })[0]?.label || '';
     state.data.requirements.push({
       id: uid(),
-      grade: nextRequirementGrade(),
-      subject: '',
+      grade,
+      subject: firstSubject,
       sections: 1,
-      periodsPerSection: 1,
+      periodsPerSection: recommendedPeriods(grade, firstSubject, state.data.settings.schoolShift),
     });
     invalidateResults();
     persistRender();

@@ -1298,3 +1298,99 @@ tbody tr:hover { background: #f9fcfb; }
   .grade-range-fields { grid-template-columns: 1fr; }
   .grade-range-summary { align-items: flex-start; flex-direction: column; }
 }
+
+/* v1.1: Omani government-school subject library */
+.curriculum-settings {
+  grid-template-columns: minmax(230px, 1fr) repeat(3, minmax(125px, 175px));
+}
+.curriculum-settings label select { min-height: 42px; background: #fff; }
+
+.subject-library-card {
+  display: grid;
+  grid-template-columns: minmax(300px, 1.25fr) minmax(300px, .85fr);
+  gap: 16px 22px;
+  align-items: center;
+  padding: 20px;
+  border: 1px solid #bfe0da;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 8% 15%, rgba(255,255,255,.95), transparent 24%),
+    linear-gradient(135deg, #f4fbf8, #eaf7f3);
+  box-shadow: 0 13px 30px rgba(17, 87, 80, .06);
+}
+.subject-library-copy {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+.subject-library-copy h3 { margin: 3px 0 6px; color: #153e3a; font-size: 20px; }
+.subject-library-copy p { margin: 0; }
+.library-icon {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: linear-gradient(145deg, #0f766e, #0a5f58);
+  color: #fff;
+  font-size: 24px;
+  font-weight: 900;
+  box-shadow: 0 12px 24px rgba(15, 118, 110, .2);
+}
+.subject-library-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.subject-library-actions label {
+  padding: 10px;
+  border: 1px solid #d5e8e4;
+  border-radius: 14px;
+  background: rgba(255,255,255,.86);
+}
+.subject-library-actions select { min-height: 44px; background: #fff; }
+.subject-library-actions .button { min-height: 46px; white-space: nowrap; }
+.library-footnote {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(117, 176, 167, .28);
+}
+.library-footnote span {
+  padding: 6px 10px;
+  border: 1px solid #d8e9e6;
+  border-radius: 999px;
+  background: rgba(255,255,255,.72);
+  color: #50706c;
+  font-size: 11px;
+  font-weight: 750;
+}
+.subject-cell { min-width: 245px; }
+.subject-cell input { width: 100%; }
+.subject-source {
+  display: block;
+  margin-top: 5px;
+  color: #18796f;
+  font-size: 10px;
+  font-weight: 800;
+}
+.subject-source.custom { color: #8a6b2d; }
+
+@media (max-width: 980px) {
+  .curriculum-settings { grid-template-columns: 1fr 1fr; }
+  .curriculum-settings > div { grid-column: 1 / -1; }
+  .subject-library-card { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .curriculum-settings { grid-template-columns: 1fr; }
+  .curriculum-settings > div { grid-column: auto; }
+  .subject-library-actions { grid-template-columns: 1fr; }
+  .subject-library-actions .button { width: 100%; }
+  .subject-library-copy { align-items: flex-start; }
+  .subject-cell { min-width: 0; }
+}

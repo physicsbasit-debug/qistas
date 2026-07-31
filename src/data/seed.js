@@ -30,6 +30,7 @@ export const seedData = {
   settings: {
     teacherMaxLoad: 18,
     leadMaxLoad: 12,
+    schoolShift: 'single',
   },
   teachers: [
     teacher('bio-1', 'معلم أحياء 1', 'الأحياء'),

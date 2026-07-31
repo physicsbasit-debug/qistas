@@ -28,7 +28,9 @@ test('app renders simplified controls and multiple-model results without browser
   assert.match(appRoot.innerHTML, /الصفوف التي تخدمها المدرسة/);
   assert.match(appRoot.innerHTML, /1-12/);
   assert.doesNotMatch(appRoot.innerHTML, /Gemini|Supabase/);
-  assert.match(appRoot.innerHTML, /الإصدار 1\.0\.0/);
+  assert.match(appRoot.innerHTML, /الإصدار 1\.1\.0/);
+  assert.match(appRoot.innerHTML, /جميع مواد المدارس الحكومية/);
+  assert.match(appRoot.innerHTML, /نظام الدوام/);
 
   const click = listeners.get('click');
   await click({
@@ -42,6 +44,15 @@ test('app renders simplified controls and multiple-model results without browser
   assert.match(appRoot.innerHTML, /الدور/);
   assert.doesNotMatch(appRoot.innerHTML, /المستهدف<input/);
   assert.doesNotMatch(appRoot.innerHTML, /مسموح عند الحاجة/);
+
+  await click({
+    target: {
+      closest() { return { dataset: { action: 'step', id: '2' } }; },
+    },
+  });
+  assert.match(appRoot.innerHTML, /مكتبة المواد العُمانية/);
+  assert.match(appRoot.innerHTML, /أضف مواد القسم بنقرة واحدة/);
+  assert.match(appRoot.innerHTML, /المسار المهني: إدارة الأعمال/);
 
   await click({
     target: {

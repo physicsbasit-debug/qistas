@@ -66,6 +66,7 @@ export function normalizeAppData(data, fallback) {
     settings: {
       teacherMaxLoad: Number(sourceSettings.teacherMaxLoad) || 18,
       leadMaxLoad: Number(sourceSettings.leadMaxLoad) || 12,
+      schoolShift: sourceSettings.schoolShift === 'double' ? 'double' : 'single',
     },
     teachers: Array.isArray(source.teachers)
       ? source.teachers.map((teacher) => normalizeTeacher(teacher, requirements))
