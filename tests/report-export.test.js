@@ -63,7 +63,7 @@ test('official report is standalone, RTL, landscape, and free of editing control
 
   assert.match(html, /خطة توزيع الأنصبة التدريسية/);
   assert.match(html, /أنصبة موزونة، توزيع أذكى/);
-  assert.match(html, /@page \{ size: A4 landscape/);
+  assert.match(html, /@page \{ size: 297mm 210mm/);
   assert.match(html, /dir="rtl"/);
   assert.match(html, /مدرسة الباسط/);
   assert.match(html, /2026\/2027/);
@@ -71,8 +71,17 @@ test('official report is standalone, RTL, landscape, and free of editing control
   assert.match(html, /الأحياء - التاسع:/);
   assert.match(html, /الشعب 1-4/);
   assert.match(html, /ملخص تغطية المقررات/);
+  assert.match(html, /class="coverage-grid"/);
+  assert.match(html, /4\/4<\/b> شعبة/);
+  assert.doesNotMatch(html, /class="coverage-table"/);
   assert.match(html, /إعداد المعلم الأول/);
   assert.doesNotMatch(html, />نقل</);
   assert.doesNotMatch(html, /data-action=/);
   assert.doesNotMatch(html, /button/);
+});
+
+test('print layout avoids the overflow that created a blank second page', () => {
+  const html = buildScenarioReportHtml(scenario, data, { approved: true });
+  assert.match(html, /@media print \{[\s\S]*html, body \{ width: auto; min-height: 0; \}/);
+  assert.doesNotMatch(html, /html, body \{ width: 297mm; min-height: 210mm; \}/);
 });

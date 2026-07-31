@@ -129,7 +129,7 @@ function teacherRows(scenario, data) {
   }).join('');
 }
 
-function coverageRows(scenario, data) {
+function coverageCards(scenario, data) {
   const assignments = scenario.assignments || [];
   return (data.requirements || []).map((requirement) => {
     const matching = assignments.filter((assignment) => (
@@ -141,13 +141,16 @@ function coverageRows(scenario, data) {
     const requiredPeriods = requiredSections * (Number(requirement.periodsPerSection) || 0);
     const complete = assignedSections === requiredSections && assignedPeriods === requiredPeriods;
     return `
-      <tr>
-        <td>${escapeHtml(requirement.subject)}</td>
-        <td>${escapeHtml(requirement.grade)}</td>
-        <td>${assignedSections} / ${requiredSections}</td>
-        <td>${assignedPeriods} / ${requiredPeriods}</td>
-        <td><span class="coverage-status ${complete ? 'complete' : 'incomplete'}">${complete ? 'مكتمل' : 'يحتاج مراجعة'}</span></td>
-      </tr>`;
+      <article class="coverage-card ${complete ? 'complete' : 'incomplete'}">
+        <div class="coverage-card-title">
+          <strong>${escapeHtml(requirement.subject)}</strong>
+          <span>${escapeHtml(requirement.grade)}</span>
+        </div>
+        <div class="coverage-card-values">
+          <span><b>${assignedSections}/${requiredSections}</b> شعبة</span>
+          <span><b>${assignedPeriods}/${requiredPeriods}</b> حصة</span>
+        </div>
+      </article>`;
   }).join('');
 }
 
@@ -170,88 +173,141 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>تقرير قِسطاس - ${escapeHtml(data.departmentName || '')}</title>
   <style>
-    @page { size: A4 landscape; margin: 9mm; }
+    @page { size: 297mm 210mm; margin: 6mm; }
+    @page qistas-landscape { size: 297mm 210mm; margin: 6mm; }
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     html, body { margin: 0; padding: 0; background: #fff; color: #17252d; }
-    body { direction: rtl; font-family: Tahoma, Arial, sans-serif; font-size: 9.5pt; line-height: 1.4; }
-    .report { width: 100%; }
+    body {
+      direction: rtl;
+      writing-mode: horizontal-tb;
+      font-family: Tahoma, Arial, sans-serif;
+      font-size: 8.7pt;
+      line-height: 1.28;
+    }
+    .report { page: qistas-landscape; width: 100%; }
     .report-header {
       position: relative;
       overflow: hidden;
       border: 1px solid #d8e5e2;
-      border-top: 5px solid #0f766e;
-      border-radius: 16px;
-      padding: 9px 13px 10px;
+      border-top: 4px solid #0f766e;
+      border-radius: 13px;
+      padding: 6px 10px 7px;
       background: linear-gradient(135deg, #ffffff 0%, #f2faf8 100%);
     }
-    .header-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
-    .brand { display: flex; align-items: center; gap: 10px; }
+    .header-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+    .brand { display: flex; align-items: center; gap: 8px; }
     .brand-mark {
-      width: 36px; height: 36px; border-radius: 13px; display: grid; place-items: center;
-      background: #0f766e; color: #fff; font-size: 19px; font-weight: 800;
+      width: 31px; height: 31px; border-radius: 11px; display: grid; place-items: center;
+      background: #0f766e; color: #fff; font-size: 17px; font-weight: 800;
     }
-    .brand strong { display: block; font-size: 15px; color: #0a5c56; }
-    .brand span { display: block; color: #61706e; font-size: 8.5pt; }
+    .brand strong { display: block; font-size: 13.5px; color: #0a5c56; }
+    .brand span { display: block; color: #61706e; font-size: 7.4pt; }
     .status-box { text-align: left; }
-    .status-box span { display: block; color: #6b7775; font-size: 8pt; }
-    .status-pill { display: inline-block; margin-top: 3px; padding: 4px 11px; border-radius: 999px; font-weight: 800; }
+    .status-box span { display: block; color: #6b7775; font-size: 7pt; }
+    .status-pill { display: inline-block; margin-top: 2px; padding: 3px 9px; border-radius: 999px; font-weight: 800; font-size: 7.5pt; }
     .status-pill.approved { color: #116149; background: #e6f7ef; border: 1px solid #b9e3d2; }
     .status-pill.draft { color: #8a5a00; background: #fff6dc; border: 1px solid #eed89b; }
     .status-pill.proposal { color: #355f76; background: #edf6fb; border: 1px solid #c9dfeb; }
-    .report-title { margin: 6px 0 1px; font-size: 18px; color: #17252d; }
-    .report-subtitle { margin: 0; color: #65726f; font-size: 9pt; }
-    .meta-grid { display: grid; grid-template-columns: 1.45fr 1fr .75fr 1fr 1fr; gap: 6px; margin-top: 8px; }
-    .meta-item { border: 1px solid #e0e9e7; border-radius: 9px; background: rgba(255,255,255,.86); padding: 5px 8px; min-width: 0; }
-    .meta-item span { display: block; color: #73807e; font-size: 7.5pt; }
-    .meta-item strong { display: block; margin-top: 2px; color: #263c39; font-size: 9pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .metrics { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 6px 0; }
-    .metric { border: 1px solid #dfe8e6; border-radius: 10px; background: #f8fbfa; padding: 5px 8px; }
-    .metric span { display: block; color: #6c7977; font-size: 7.5pt; }
-    .metric strong { display: block; margin-top: 1px; color: #132c29; font-size: 12px; }
-    .section-title { display: flex; align-items: center; justify-content: space-between; margin: 7px 0 4px; }
-    .section-title h2 { margin: 0; color: #153c37; font-size: 12.5pt; }
-    .section-title span { color: #71807d; font-size: 8pt; }
+    .report-title { margin: 3px 0 0; font-size: 16px; line-height: 1.15; color: #17252d; }
+    .report-subtitle { margin: 1px 0 0; color: #65726f; font-size: 7.6pt; }
+    .meta-grid { display: grid; grid-template-columns: 1.45fr 1fr .76fr 1fr 1fr; gap: 4px; margin-top: 5px; }
+    .meta-item { border: 1px solid #e0e9e7; border-radius: 7px; background: rgba(255,255,255,.88); padding: 3px 6px; min-width: 0; }
+    .meta-item span { display: block; color: #73807e; font-size: 6.6pt; }
+    .meta-item strong { display: block; margin-top: 1px; color: #263c39; font-size: 7.8pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 4px;
+      margin: 4px 0;
+      border: 1px solid #dfe8e6;
+      border-radius: 9px;
+      overflow: hidden;
+      background: #f8fbfa;
+    }
+    .metric { padding: 3px 7px; border-left: 1px solid #e2ebe9; }
+    .metric:last-child { border-left: 0; }
+    .metric span { display: inline; color: #6c7977; font-size: 6.8pt; }
+    .metric strong { display: inline; margin-right: 5px; color: #132c29; font-size: 10.5px; }
+    .section-title { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 3px; }
+    .section-title h2 { margin: 0; color: #153c37; font-size: 10.8pt; }
+    .section-title span { color: #71807d; font-size: 6.8pt; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; }
     thead { display: table-header-group; }
     tr { break-inside: avoid; page-break-inside: avoid; }
-    .teacher-table { table-layout: fixed; border: 1px solid #d7e4e1; border-radius: 11px; overflow: hidden; font-size: 7.8pt; }
-    .teacher-table th { padding: 5px 5px; color: #fff; background: #0f766e; border-left: 1px solid rgba(255,255,255,.18); font-weight: 800; }
-    .teacher-table td { padding: 5px 5px; vertical-align: top; border-bottom: 1px solid #e3ebe9; border-left: 1px solid #edf2f1; }
+    .teacher-table { table-layout: fixed; border: 1px solid #d7e4e1; border-radius: 9px; overflow: hidden; font-size: 7.05pt; }
+    .teacher-table th { padding: 3.5px 4px; color: #fff; background: #0f766e; border-left: 1px solid rgba(255,255,255,.18); font-weight: 800; }
+    .teacher-table td { padding: 3.2px 4px; vertical-align: top; border-bottom: 1px solid #e3ebe9; border-left: 1px solid #edf2f1; }
     .teacher-table tbody tr:nth-child(even) td { background: #f8fbfa; }
     .teacher-table tbody tr:last-child td { border-bottom: 0; }
     .teacher-table th:last-child, .teacher-table td:last-child { border-left: 0; }
-    .index-cell { width: 4%; text-align: center; font-weight: 800; }
-    .teacher-name { width: 13%; }
-    .teacher-table th:nth-child(3) { width: 9%; }
-    .teacher-table th:nth-child(4) { width: 8%; }
-    .teacher-table th:nth-child(5) { width: 48%; }
-    .teacher-table th:nth-child(6) { width: 8%; }
-    .teacher-table th:nth-child(7) { width: 10%; }
-    .role-badge { display: inline-block; border-radius: 999px; padding: 2px 7px; background: #edf3f2; color: #405c58; font-size: 7.5pt; font-weight: 700; white-space: nowrap; }
+    .index-cell { width: 3.5%; text-align: center; font-weight: 800; }
+    .teacher-name { width: 12.5%; }
+    .teacher-table th:nth-child(3) { width: 8.5%; }
+    .teacher-table th:nth-child(4) { width: 7.5%; }
+    .teacher-table th:nth-child(5) { width: 51%; }
+    .teacher-table th:nth-child(6) { width: 7.5%; }
+    .teacher-table th:nth-child(7) { width: 9.5%; }
+    .role-badge { display: inline-block; border-radius: 999px; padding: 1px 5px; background: #edf3f2; color: #405c58; font-size: 6.5pt; font-weight: 700; white-space: nowrap; }
     .role-badge.lead { background: #e8f6f2; color: #0f6b5e; }
-    .assignment-line { display: grid; grid-template-columns: minmax(115px, 1.15fr) 1fr auto; align-items: baseline; gap: 6px; padding: 1px 0; border-bottom: 1px dotted #dbe4e2; }
+    .assignment-line {
+      display: grid;
+      grid-template-columns: minmax(102px, 1.08fr) 1fr auto;
+      align-items: baseline;
+      gap: 4px;
+      padding: 0;
+      border-bottom: 1px dotted #dbe4e2;
+    }
     .assignment-line:last-child { border-bottom: 0; }
-    .assignment-line strong { color: #203e3a; font-size: 7.7pt; }
+    .assignment-line strong { color: #203e3a; font-size: 6.95pt; }
     .assignment-line span { color: #516360; }
     .assignment-line em { color: #0f766e; font-style: normal; font-weight: 800; white-space: nowrap; }
     .load-cell { text-align: center; white-space: nowrap; }
-    .load-cell strong { display: block; font-size: 12px; color: #0f766e; }
-    .load-cell span { display: block; color: #74817f; font-size: 7pt; }
+    .load-cell strong { display: inline; font-size: 10px; color: #0f766e; }
+    .load-cell span { display: inline; margin-right: 3px; color: #74817f; font-size: 6.2pt; }
     .notes-cell { color: #63706e; }
     .empty { color: #8b9694; }
-    .coverage-section { margin-top: 7px; break-inside: avoid; }
-    .coverage-table { border: 1px solid #d9e5e2; border-radius: 10px; overflow: hidden; font-size: 7.8pt; }
-    .coverage-table th { padding: 4px 7px; background: #eaf5f2; color: #244f49; border-left: 1px solid #d7e6e2; }
-    .coverage-table td { padding: 4px 7px; border-top: 1px solid #e3ebe9; border-left: 1px solid #edf2f1; }
-    .coverage-table th:last-child, .coverage-table td:last-child { border-left: 0; }
-    .coverage-status { display: inline-block; border-radius: 999px; padding: 2px 7px; font-size: 7.5pt; font-weight: 800; white-space: nowrap; }
-    .coverage-status.complete { color: #116149; background: #e9f7f1; }
-    .coverage-status.incomplete { color: #9a5419; background: #fff1df; }
-    .unassigned-note { margin-top: 8px; border: 1px solid #efc5bf; background: #fff4f2; color: #8a2b22; border-radius: 9px; padding: 7px 10px; }
-    .signatures { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; break-inside: avoid; }
-    .signature { min-height: 38px; border-top: 1px solid #9fb1ae; padding-top: 4px; color: #667472; }
-    .signature strong { display: inline-block; color: #284743; margin-left: 10px; }
-    .report-footer { margin-top: 8px; padding-top: 4px; border-top: 1px solid #dfe8e6; display: flex; justify-content: space-between; color: #7a8785; font-size: 7pt; }
+    .coverage-section { margin-top: 4px; break-inside: avoid; page-break-inside: avoid; }
+    .coverage-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(31mm, 1fr));
+      gap: 3px;
+    }
+    .coverage-card {
+      min-width: 0;
+      border: 1px solid #d9e5e2;
+      border-radius: 7px;
+      background: #fbfdfc;
+      padding: 3px 5px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 4px;
+    }
+    .coverage-card.complete { border-right: 3px solid #49a58f; }
+    .coverage-card.incomplete { border-right: 3px solid #d99048; background: #fffaf3; }
+    .coverage-card-title { min-width: 0; }
+    .coverage-card-title strong { display: block; color: #244f49; font-size: 6.9pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .coverage-card-title span { display: block; color: #788582; font-size: 6.2pt; }
+    .coverage-card-values { text-align: left; white-space: nowrap; color: #64716f; font-size: 6.2pt; }
+    .coverage-card-values span { display: block; }
+    .coverage-card-values b { color: #0f766e; font-size: 6.7pt; }
+    .unassigned-note { margin-top: 4px; border: 1px solid #efc5bf; background: #fff4f2; color: #8a2b22; border-radius: 7px; padding: 4px 7px; font-size: 7pt; }
+    .signatures {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 13px;
+      margin-top: 5px;
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+    .signature { min-height: 25px; border-top: 1px solid #9fb1ae; padding-top: 3px; color: #667472; font-size: 7pt; }
+    .signature strong { display: inline-block; color: #284743; margin-left: 8px; }
+    .report-footer { margin-top: 4px; padding-top: 3px; border-top: 1px solid #dfe8e6; display: flex; justify-content: space-between; color: #7a8785; font-size: 6.2pt; }
+    @media print {
+      html, body { width: auto; min-height: 0; }
+      body { margin: 0; }
+      .report { page: qistas-landscape; width: 100%; }
+    }
     @media screen {
       body { background: #eef4f2; padding: 18px; }
       .report { max-width: 1120px; margin: 0 auto; background: #fff; padding: 12px; box-shadow: 0 16px 45px rgba(23,37,45,.12); }
@@ -299,10 +355,7 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
 
     <section class="coverage-section">
       <div class="section-title"><h2>ملخص تغطية المقررات</h2><span>مطابقة الشعب والحصص المطلوبة مع المسندة</span></div>
-      <table class="coverage-table">
-        <thead><tr><th>المادة</th><th>الصف</th><th>الشعب المسندة / المطلوبة</th><th>الحصص المسندة / المطلوبة</th><th>الحالة</th></tr></thead>
-        <tbody>${coverageRows(scenario, data)}</tbody>
-      </table>
+      <div class="coverage-grid">${coverageCards(scenario, data)}</div>
     </section>
 
     <section class="signatures">
@@ -336,18 +389,23 @@ export function printScenarioReport(scenario, data, options = {}) {
     if (frame.parentNode) frame.parentNode.removeChild(frame);
   };
 
-  frame.onload = () => {
+  frame.onload = async () => {
     const reportWindow = frame.contentWindow;
     if (!reportWindow) {
       cleanup();
       return;
     }
     reportWindow.addEventListener?.('afterprint', cleanup, { once: true });
+    try {
+      await frame.contentDocument?.fonts?.ready;
+    } catch {
+      // بعض المتصفحات لا توفر FontFaceSet داخل iframe؛ الطباعة تظل صالحة.
+    }
     setTimeout(() => {
       reportWindow.focus();
       reportWindow.print();
-      setTimeout(cleanup, 2500);
-    }, 180);
+      setTimeout(cleanup, 3000);
+    }, 220);
   };
 
   frame.srcdoc = html;
