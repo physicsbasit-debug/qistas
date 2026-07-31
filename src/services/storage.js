@@ -50,6 +50,7 @@ function normalizeTeacher(teacher, requirements) {
     allowedSubjects: Array.isArray(teacher.allowedSubjects) ? teacher.allowedSubjects : [],
     isLead: Boolean(teacher.isLead),
     active: teacher.active !== false,
+    autoName: teacher.autoName === true,
     assignmentPolicy,
   };
 }

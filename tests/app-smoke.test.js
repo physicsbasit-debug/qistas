@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-function createBrowserHarness() {
+function createBrowserHarness(initialStorage = {}) {
   const listeners = new Map();
   const appRoot = {
     innerHTML: '',
     addEventListener(type, handler) { listeners.set(type, handler); },
   };
-  const storage = new Map();
+  const storage = new Map(Object.entries(initialStorage));
 
   globalThis.document = {
     querySelector(selector) {
@@ -47,8 +47,10 @@ test('app keeps the existing distribution workflow after merging setup sections'
   assert.match(appRoot.innerHTML, /عدد المعلمين/);
   assert.match(appRoot.innerHTML, /الشعب والحصص/);
   assert.match(appRoot.innerHTML, /الخطوة 1 من 3/);
-  assert.match(appRoot.innerHTML, /الإصدار 1\.2\.0/);
+  assert.match(appRoot.innerHTML, /الإصدار 1\.2\.1/);
   assert.doesNotMatch(appRoot.innerHTML, /Gemini|Supabase/);
+  assert.doesNotMatch(appRoot.innerHTML, /مواد أساسية|المهارات والفنون/);
+  assert.doesNotMatch(appRoot.innerHTML, /تحديث عدد بطاقات المعلمين فقط/);
 
   const click = listeners.get('click');
   await click(clickEvent({ action: 'step', id: '1' }));
@@ -59,13 +61,13 @@ test('app keeps the existing distribution workflow after merging setup sections'
   await click(clickEvent({ action: 'step', id: '2' }));
   assert.match(appRoot.innerHTML, /نماذج التوزيع/);
   await click(clickEvent({ action: 'generate' }));
-  assert.match(appRoot.innerHTML, /عثر قِسطاس على 20 نموذجًا/);
-  assert.match(appRoot.innerHTML, /النموذج 1 من 20/);
+  assert.match(appRoot.innerHTML, /عثر قِسطاس على 8 نماذج/);
+  assert.match(appRoot.innerHTML, /النموذج 1 من 8/);
   assert.match(appRoot.innerHTML, /نماذج إضافية/);
   assert.match(appRoot.innerHTML, /اعتماد مبدئي وتعديل/);
 
   await click(clickEvent({ action: 'generate-more' }));
-  assert.match(appRoot.innerHTML, /عثر قِسطاس على 40 نموذجًا/);
+  assert.match(appRoot.innerHTML, /عثر قِسطاس على 28 نموذجًا/);
 
   await click(clickEvent({ action: 'adopt-model' }));
   assert.match(appRoot.innerHTML, /الخطة قيد التعديل/);
@@ -92,7 +94,7 @@ test('choosing one subject prepares a clean isolated plan and teacher list', asy
   change(changeEvent({ planScopeCheck: 'hasLead' }, '', true));
   await click(clickEvent({ action: 'apply-plan-configuration' }));
 
-  assert.match(appRoot.innerHTML, /تم إنشاء خطة مستقلة لمادة أو قسم «اللغة العربية»/);
+  assert.match(appRoot.innerHTML, /تم إعداد خطة مستقلة لـ«اللغة العربية» وتهيئة 4 معلمين لها/);
   assert.match(appRoot.innerHTML, /اللغة العربية/);
   assert.doesNotMatch(appRoot.innerHTML, /data-path="req:[^"]+:subject"[^>]*>[^<]*الفيزياء/);
 
@@ -102,12 +104,16 @@ test('choosing one subject prepares a clean isolated plan and teacher list', asy
   assert.equal(saved.teachers.length, 4);
   assert.equal(saved.teachers.filter((teacher) => teacher.isLead).length, 1);
   assert.ok(saved.teachers.every((teacher) => teacher.specialty === 'اللغة العربية'));
+  assert.equal(saved.teachers[0].name, 'المعلم الأول');
+  assert.ok(saved.teachers.slice(1).every((teacher) => teacher.name.includes('اللغة العربية')));
+  assert.ok(saved.teachers.every((teacher) => !teacher.name.includes('أحياء')));
   assert.ok(saved.requirements.length > 0);
   assert.ok(saved.requirements.every((requirement) => requirement.subject === 'اللغة العربية'));
 
   await click(clickEvent({ action: 'step', id: '1' }));
   assert.equal((appRoot.innerHTML.match(/class="teacher-editor /g) || []).length, 4);
   assert.match(appRoot.innerHTML, /readonly aria-readonly="true"/);
+  assert.doesNotMatch(appRoot.innerHTML, /نسخ الإعداد لزملاء التخصص/);
 });
 
 
@@ -128,4 +134,39 @@ test('saved plans can be stored and removed without changing the open plan', asy
   assert.deepEqual(JSON.parse(storage.get('qistas:plans:v1')), []);
   assert.match(appRoot.innerHTML, /بقيت الخطة المفتوحة دون تغيير/);
   assert.match(appRoot.innerHTML, /قسم العلوم/);
+});
+
+
+test('stored placeholder teacher names are repaired to the active single subject on startup', async () => {
+  const legacy = {
+    planId: 'islamic-plan',
+    planName: 'التربية الإسلامية',
+    schoolName: 'مدرسة اختبار',
+    departmentName: 'التربية الإسلامية',
+    academicYear: '2026/2027',
+    gradeRange: { start: 8, end: 10 },
+    planScope: {
+      mode: 'single',
+      templateId: 'islamic',
+      subjectId: 'islamic',
+      selectedSubjectIds: ['islamic'],
+      teacherCount: 3,
+      hasLead: true,
+    },
+    settings: { teacherMaxLoad: 18, leadMaxLoad: 14, schoolShift: 'single' },
+    requirements: [
+      { id: 'islamic-8', grade: 'الثامن', subject: 'التربية الإسلامية', sections: 8, periodsPerSection: 3 },
+    ],
+    teachers: [
+      { id: 't1', name: 'المعلم الأول', specialty: 'التربية الإسلامية', isLead: true, active: true },
+      { id: 't2', name: 'معلم أحياء 1', specialty: 'التربية الإسلامية', isLead: false, active: true },
+      { id: 't3', name: 'معلم أحياء 2', specialty: 'التربية الإسلامية', isLead: false, active: true },
+    ],
+  };
+  const { storage } = createBrowserHarness({ 'qistas:v1': JSON.stringify(legacy) });
+  await import(`../src/app.js?repair=${Date.now()}`);
+  const saved = JSON.parse(storage.get('qistas:v1'));
+  assert.equal(saved.teachers[0].name, 'المعلم الأول');
+  assert.equal(saved.teachers[1].name, 'معلم التربية الإسلامية 1');
+  assert.equal(saved.teachers[2].name, 'معلم التربية الإسلامية 2');
 });

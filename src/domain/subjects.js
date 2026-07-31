@@ -167,7 +167,7 @@ export function subjectsForGrade(grade, { includeVocational = true } = {}) {
   if (!Number.isFinite(number)) return [];
   return SUBJECT_CATALOG
     .filter((item) => item.grades.includes(number) && (includeVocational || item.track !== 'vocational'))
-    .sort((a, b) => a.category.localeCompare(b.category, 'ar') || a.label.localeCompare(b.label, 'ar'));
+    .sort((a, b) => a.label.localeCompare(b.label, 'ar'));
 }
 
 export function allSubjectLabels() {

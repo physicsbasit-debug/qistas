@@ -59,7 +59,12 @@ import {
 } from './domain/subjects.js';
 
 const app = document.querySelector('#app');
-const MODEL_BATCH_SIZE = 20;
+const INITIAL_MODEL_BATCH_SIZE = 8;
+const ADDITIONAL_MODEL_BATCH_SIZE = 20;
+const INITIAL_SEARCH_ATTEMPTS = 36;
+const ADDITIONAL_SEARCH_ATTEMPTS = 100;
+const REBALANCE_MODEL_LIMIT = 8;
+const REBALANCE_SEARCH_ATTEMPTS = 72;
 const MAX_DISPLAY_MODELS = 100;
 
 const storedWorkspace = loadWorkspace();
@@ -177,13 +182,34 @@ function planDefaultName(scope = state.data.planScope) {
   return `${planScopeLabel(scope)} ${gradeRangeLabel(activeGradeRange())}`.trim();
 }
 
-function buildTeachersForScope(scope, count, hasLead, { preservePolicies = true } = {}) {
+function normalizedSubjectToken(value = '') {
+  return String(value || '').trim().replace(/^ال/u, '');
+}
+
+function generatedTeacherName(name = '') {
+  const normalized = String(name || '').trim();
+  if (!normalized) return true;
+  if (normalized === 'المعلم الأول') return true;
+  if (/^معلم\s+\d+$/u.test(normalized)) return true;
+  const match = normalized.match(/^معلم\s+(.+?)\s+\d+$/u);
+  if (!match) return false;
+  const embedded = normalizedSubjectToken(match[1]);
+  return SUBJECT_CATALOG.some((item) => normalizedSubjectToken(item.label) === embedded);
+}
+
+function buildTeachersForScope(
+  scope,
+  count,
+  hasLead,
+  { preservePolicies = true, preserveNames = true } = {},
+) {
   const subjects = planScopeSubjects(scope, activeGradeRange());
   const labels = subjects.map((item) => item.label);
   const fallbackSpecialty = labels[0] || '';
   const existing = [...state.data.teachers].sort((a, b) => Number(b.isLead) - Number(a.isLead));
   const total = Math.max(1, Number(count) || 1);
   const teachers = [];
+  const specialtyCounters = new Map();
 
   for (let index = 0; index < total; index += 1) {
     const previous = existing[index];
@@ -197,9 +223,26 @@ function buildTeachersForScope(scope, count, hasLead, { preservePolicies = true 
       ? normalizeAssignmentPolicy(previous.assignmentPolicy)
       : createDefaultAssignmentPolicy();
 
+    const specialtyIndex = isLead
+      ? 0
+      : (specialtyCounters.get(specialty) || 0) + 1;
+    if (!isLead) specialtyCounters.set(specialty, specialtyIndex);
+    const automaticName = isLead
+      ? 'المعلم الأول'
+      : specialty
+        ? `معلم ${specialty} ${specialtyIndex}`
+        : `معلم ${specialtyIndex}`;
+    const canPreserveName = Boolean(
+      preserveNames
+      && previous?.name
+      && previous.autoName !== true
+      && !generatedTeacherName(previous.name),
+    );
+
     teachers.push({
       id: previous?.id || uid(),
-      name: previous?.name || (isLead ? 'المعلم الأول' : `معلم ${index + 1}`),
+      name: canPreserveName ? previous.name : automaticName,
+      autoName: !canPreserveName,
       specialty,
       isLead,
       active: previous?.active !== false,
@@ -211,36 +254,30 @@ function buildTeachersForScope(scope, count, hasLead, { preservePolicies = true 
   return teachers;
 }
 
-function applyPlanConfiguration({ syncTeachersOnly = false } = {}) {
-  const requested = normalizedPendingScope();
-  const pending = syncTeachersOnly
-    ? normalizePlanScope({
-      ...state.data.planScope,
-      teacherCount: requested.teacherCount,
-      hasLead: requested.hasLead,
-    }, state.data.requirements, state.data.teachers, activeGradeRange())
-    : requested;
+function applyPlanConfiguration() {
+  const pending = normalizedPendingScope();
   const currentSignature = scopeSignature(state.data.planScope);
   const pendingSignature = scopeSignature(pending);
   const scopeChanged = currentSignature !== pendingSignature;
 
-  if (!syncTeachersOnly && scopeChanged && (state.data.requirements.length || state.data.teachers.length)) {
+  if (scopeChanged && (state.data.requirements.length || state.data.teachers.length)) {
     savePlanSnapshot();
   }
 
-  const requirements = syncTeachersOnly
-    ? state.data.requirements
-    : buildRequirementsForScope(
-      pending,
-      activeGradeRange(),
-      state.data.settings.schoolShift,
-      scopeChanged ? [] : state.data.requirements,
-    );
+  const requirements = buildRequirementsForScope(
+    pending,
+    activeGradeRange(),
+    state.data.settings.schoolShift,
+    scopeChanged ? [] : state.data.requirements,
+  );
   const teachers = buildTeachersForScope(
     pending,
     pending.teacherCount,
     pending.hasLead,
-    { preservePolicies: !scopeChanged },
+    {
+      preservePolicies: !scopeChanged,
+      preserveNames: !scopeChanged,
+    },
   );
   const planName = scopeChanged || !state.data.planName
     ? planDefaultName(pending)
@@ -260,11 +297,9 @@ function applyPlanConfiguration({ syncTeachersOnly = false } = {}) {
     requirements,
   };
   state.pendingPlanScope = clone(pending);
-  state.notice = syncTeachersOnly
-    ? `تمت تهيئة ${teachers.length} بطاقات للمعلمين${pending.hasLead ? '، بينها معلم أول واحد' : ''}.`
-    : scopeChanged
-      ? `تم إنشاء خطة مستقلة لمادة أو قسم «${planScopeLabel(pending)}»، وحُفظت الخطة السابقة ضمن الخطط المحفوظة.`
-      : `تم تحديث متطلبات ${planScopeLabel(pending)} وقائمة المعلمين دون إدخال مواد من خارج نطاق الخطة.`;
+  state.notice = scopeChanged
+    ? `تم إعداد خطة مستقلة لـ«${planScopeLabel(pending)}» وتهيئة ${teachers.length} معلمين لها.`
+    : `تم تحديث متطلبات ${planScopeLabel(pending)} وعدد المعلمين مع الحفاظ على الأسماء المدخلة.`;
   state.noticeType = 'success';
   invalidateResults();
   saveAppData(state.data);
@@ -384,7 +419,16 @@ function updateData(path, value) {
       teacher[field] = value === 'true';
       state.data.planScope.hasLead = state.data.teachers.some((item) => item.isLead);
       state.pendingPlanScope.hasLead = state.data.planScope.hasLead;
-    } else teacher[field] = value;
+    } else {
+      teacher[field] = value;
+      if (field === 'name') teacher.autoName = false;
+      if (field === 'specialty' && teacher.autoName === true) {
+        const sameSpecialtyBefore = state.data.teachers
+          .slice(0, state.data.teachers.indexOf(teacher))
+          .filter((item) => !item.isLead && item.specialty === value).length;
+        teacher.name = teacher.isLead ? 'المعلم الأول' : `معلم ${value} ${sameSpecialtyBefore + 1}`;
+      }
+    }
   }
 
   if (kind === 'req') {
@@ -499,29 +543,29 @@ function scopeSetupCard() {
         <span class="scope-status ${currentChanged ? 'changed' : ''}">${currentChanged ? 'تغييرات غير مطبقة' : 'النطاق مطبق'}</span>
       </div>
 
-      <div class="scope-mode-switch" role="group" aria-label="نوع خطة التوزيع">
-        <label class="scope-mode-option ${pending.mode === PLAN_SCOPE_MODE.SINGLE ? 'selected' : ''}">
-          <input type="radio" name="plan-scope-mode" value="single" data-plan-scope="mode" ${pending.mode === PLAN_SCOPE_MODE.SINGLE ? 'checked' : ''}>
-          <span><strong>مادة واحدة</strong><small>مثل العربية أو الرياضيات أو الفيزياء</small></span>
-        </label>
-        <label class="scope-mode-option ${pending.mode === PLAN_SCOPE_MODE.DEPARTMENT ? 'selected' : ''}">
-          <input type="radio" name="plan-scope-mode" value="department" data-plan-scope="mode" ${pending.mode === PLAN_SCOPE_MODE.DEPARTMENT ? 'checked' : ''}>
-          <span><strong>قسم متعدد المواد</strong><small>مثل العلوم أو الدراسات الاجتماعية</small></span>
-        </label>
-      </div>
-
-      ${pending.mode === PLAN_SCOPE_MODE.SINGLE ? `
-        <label class="scope-main-select">المادة
-          <select data-plan-scope="subjectId">
-            ${activeSubjects.map((item) => `<option value="${esc(item.id)}" ${item.id === pending.subjectId ? 'selected' : ''}>${esc(item.label)} · ${esc(item.category)}</option>`).join('')}
+      <div class="scope-choice-grid">
+        <label>نوع الخطة
+          <select data-plan-scope="mode">
+            <option value="single" ${pending.mode === PLAN_SCOPE_MODE.SINGLE ? 'selected' : ''}>مادة واحدة</option>
+            <option value="department" ${pending.mode === PLAN_SCOPE_MODE.DEPARTMENT ? 'selected' : ''}>قسم متعدد المواد</option>
           </select>
-        </label>` : `
-        <div class="department-scope-grid">
+        </label>
+
+        ${pending.mode === PLAN_SCOPE_MODE.SINGLE ? `
+          <label>المادة
+            <select data-plan-scope="subjectId">
+              ${activeSubjects.map((item) => `<option value="${esc(item.id)}" ${item.id === pending.subjectId ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
+            </select>
+          </label>` : `
           <label>القسم
             <select data-plan-scope="templateId">
               ${DEPARTMENT_TEMPLATES.map((item) => `<option value="${esc(item.id)}" ${item.id === pending.templateId ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}
             </select>
-          </label>
+          </label>`}
+      </div>
+
+      ${pending.mode === PLAN_SCOPE_MODE.SINGLE ? '' : `
+        <div class="department-scope-grid">
           <div class="department-subjects">
             <span>المواد الداخلة في الخطة</span>
             <div class="scope-subject-chips">
@@ -546,9 +590,8 @@ function scopeSetupCard() {
       </div>
 
       <div class="scope-actions">
-        <button class="button primary" data-action="apply-plan-configuration">تهيئة الخطة بالكامل</button>
-        <button class="button secondary" data-action="sync-teacher-count">تحديث عدد بطاقات المعلمين فقط</button>
-        <small>عند تغيير المادة أو القسم تُحفظ الخطة السابقة تلقائيًا كخطة مستقلة.</small>
+        <button class="button primary" data-action="apply-plan-configuration">اعتماد إعداد الخطة</button>
+        <small>يطبّق المادة والشعب وعدد المعلمين معًا. عند تغيير المادة أو القسم تُحفظ الخطة السابقة تلقائيًا.</small>
       </div>
     </div>`;
 }
@@ -583,12 +626,12 @@ function requirementsSetupSection() {
                   <td data-label="حصص الشعبة"><input class="number" type="number" min="1" data-path="req:${requirement.id}:periodsPerSection" value="${requirement.periodsPerSection}"></td>
                   <td data-label="الإجمالي"><strong class="row-total">${Number(requirement.sections) * Number(requirement.periodsPerSection)}</strong></td>
                   <td class="row-action"><button class="icon-button danger" data-action="delete-req" data-id="${requirement.id}">×</button></td>
-                </tr>`).join('') || '<tr><td colspan="6"><div class="empty-table-state">اختر المادة أو القسم ثم اضغط «تهيئة الخطة بالكامل».</div></td></tr>'}
+                </tr>`).join('') || '<tr><td colspan="6"><div class="empty-table-state">اختر المادة أو القسم ثم اضغط «اعتماد إعداد الخطة».</div></td></tr>'}
             </tbody>
           </table>
         </div>
         ${outOfRangeRequirements().length ? `<div class="alert warning">يوجد ${outOfRangeRequirements().length} مقرر خارج نطاق المدرسة الحالي.</div>` : ''}
-        ${requirementsOutsideScope().length ? `<div class="alert error">يوجد ${requirementsOutsideScope().length} مقرر من خارج مادة أو قسم الخطة. اضغط «تهيئة الخطة بالكامل» لتنظيفها.</div>` : ''}
+        ${requirementsOutsideScope().length ? `<div class="alert error">يوجد ${requirementsOutsideScope().length} مقرر من خارج مادة أو قسم الخطة. اضغط «اعتماد إعداد الخطة» لتنظيفها.</div>` : ''}
       </div>
     </details>`;
 }
@@ -770,7 +813,10 @@ function teacherEditor(teacher, index) {
             <small>سيُسند إليه</small>
             <strong>${esc(describeAssignmentPolicy(teacher, state.data.requirements))}</strong>
           </div>
-          <button class="text-button compact copy-policy-button" data-action="copy-policy" data-id="${teacher.id}">تطبيق على معلمي ${esc(teacher.specialty || 'التخصص نفسه')}</button>
+          ${state.data.planScope.mode === PLAN_SCOPE_MODE.DEPARTMENT
+    && state.data.teachers.filter((item) => item.id !== teacher.id && item.specialty === teacher.specialty).length
+    ? `<button class="text-button compact copy-policy-button" data-action="copy-policy" data-id="${teacher.id}">نسخ الإعداد لزملاء التخصص</button>`
+    : ''}
         </div>
         ${policyContext(teacher)}
       </div>
@@ -1139,8 +1185,12 @@ function modelResultsPanel() {
       ${modelComparison()}
     </div>` : '';
 
-  const searchMessage = state.scenarios.length
-    ? `<div class="models-found"><strong>عثر قِسطاس على ${state.scenarios.length} نموذجًا مختلفًا${state.searchStats.completeFound ? ' ومكتملًا' : ''}.</strong><span>تم فحص ${state.searchStats.attempts} محاولة توزيع، مع حذف النتائج المكررة تلقائيًا.</span></div>`
+  const modelCount = state.scenarios.length;
+  const modelCountText = modelCount >= 3 && modelCount <= 10
+    ? `${modelCount} نماذج مختلفة${state.searchStats?.completeFound ? ' ومكتملة' : ''}`
+    : `${modelCount} نموذجًا مختلفًا${state.searchStats?.completeFound ? ' ومكتملًا' : ''}`;
+  const searchMessage = modelCount
+    ? `<div class="models-found"><strong>عثر قِسطاس على ${modelCountText}.</strong><span>تم فحص ${state.searchStats.attempts} محاولة توزيع، مع حذف النتائج المكررة تلقائيًا.</span></div>`
     : '';
 
   return `
@@ -1151,7 +1201,7 @@ function modelResultsPanel() {
           <div>
             <p class="eyebrow">الخطوة الثالثة</p>
             <h2>نماذج التوزيع</h2>
-            <p class="muted">يبحث قِسطاس عن حلول متعددة، يرتبها، ويترك القرار النهائي لك.</p>
+            <p class="muted">يعرض أفضل النماذج سريعًا، ويمكنك توسيع البحث عند الحاجة.</p>
           </div>
         </div>
         <div class="actions no-print">
@@ -1306,8 +1356,8 @@ async function rebalanceDraft() {
       state.data.requirements,
       state.data.settings,
       {
-        limit: MODEL_BATCH_SIZE,
-        attempts: 120,
+        limit: REBALANCE_MODEL_LIMIT,
+        attempts: REBALANCE_SEARCH_ATTEMPTS,
         seedOffset: 10_000 + round,
         fixedAssignments,
         frozenTeacherIds,
@@ -1367,7 +1417,7 @@ function render() {
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.2.0 · خطة معزولة لكل مادة أو قسم</span>
+            <span class="status-pill">الإصدار 1.2.1 · تهيئة أبسط وتوليد أسرع</span>
             <h1>وزّع الأنصبة بثقة،<br><em>من دون زحمة.</em></h1>
             <p>اختر المادة أو القسم مرة واحدة، وهيّئ المعلمين والشعب، ثم اختر من نماذج توزيع صحيحة ومتوازنة.</p>
             <div class="hero-features"><span>✓ جميع المواد</span><span>✓ الصفوف 1-12</span><span>✓ نماذج متعددة</span></div>
@@ -1526,7 +1576,7 @@ app.addEventListener('click', async (event) => {
         || !state.data.requirements.length
         || !state.data.teachers.length;
       if (setupNeedsApply) {
-        state.notice = 'اضغط «تهيئة الخطة بالكامل» أولًا لتطبيق المادة وعدد المعلمين والشعب قبل الانتقال.';
+        state.notice = 'اضغط «اعتماد إعداد الخطة» أولًا لتطبيق المادة وعدد المعلمين والشعب قبل الانتقال.';
         state.noticeType = 'warning';
         render();
         return;
@@ -1588,7 +1638,6 @@ app.addEventListener('click', async (event) => {
   }
 
   if (action === 'apply-plan-configuration') applyPlanConfiguration();
-  if (action === 'sync-teacher-count') applyPlanConfiguration({ syncTeachersOnly: true });
 
   if (action === 'save-plan') {
     const snapshot = savePlanSnapshot();
@@ -1813,8 +1862,8 @@ async function generate(more = false) {
       state.data.requirements,
       state.data.settings,
       {
-        limit: MODEL_BATCH_SIZE,
-        attempts: 100,
+        limit: more ? ADDITIONAL_MODEL_BATCH_SIZE : INITIAL_MODEL_BATCH_SIZE,
+        attempts: more ? ADDITIONAL_SEARCH_ATTEMPTS : INITIAL_SEARCH_ATTEMPTS,
         seedOffset: more ? state.generationRound + 1 : 0,
         excludeSignatures,
       },
@@ -1844,4 +1893,23 @@ async function generate(more = false) {
 }
 
 
+function repairCurrentTeacherPlaceholders() {
+  if (!state.data.teachers.length) return;
+  const repaired = buildTeachersForScope(
+    state.data.planScope,
+    state.data.teachers.length,
+    state.data.planScope.hasLead,
+    { preservePolicies: true, preserveNames: true },
+  );
+  const changed = repaired.some((teacher, index) => (
+    teacher.name !== state.data.teachers[index]?.name
+    || teacher.specialty !== state.data.teachers[index]?.specialty
+    || teacher.isLead !== state.data.teachers[index]?.isLead
+  ));
+  if (!changed) return;
+  state.data.teachers = repaired;
+  saveAppData(state.data);
+}
+
+repairCurrentTeacherPlaceholders();
 render();

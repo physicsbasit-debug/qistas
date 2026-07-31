@@ -1450,6 +1450,22 @@ tbody tr:hover { background: #f9fcfb; }
 .scope-mode-option strong, .scope-mode-option small { display: block; }
 .scope-mode-option strong { color: #214c47; font-size: 13px; }
 .scope-mode-option small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+
+.scope-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.scope-choice-grid > label {
+  padding: 12px;
+  border: 1px solid #d3e6e2;
+  border-radius: 15px;
+  background: rgba(255,255,255,.84);
+}
+.scope-choice-grid select { min-height: 44px; background: #fff; }
+.department-scope-grid { grid-template-columns: 1fr; }
+.scope-actions .button { min-width: 190px; }
+
 .scope-main-select { max-width: 620px; padding: 12px; border: 1px solid #d3e6e2; border-radius: 15px; background: rgba(255,255,255,.82); }
 .scope-main-select select { min-height: 45px; background: #fff; }
 .department-scope-grid { display: grid; grid-template-columns: minmax(210px, .55fr) minmax(0, 1.45fr); gap: 14px; align-items: start; }
@@ -1492,7 +1508,7 @@ tbody tr:hover { background: #f9fcfb; }
   .step-nav { grid-template-columns: repeat(3, minmax(135px, 1fr)); }
   .plan-library-actions, .scope-actions { display: grid; grid-template-columns: 1fr; width: 100%; }
   .saved-plan-select, .plan-library-actions .button, .scope-actions .button { width: 100%; }
-  .scope-mode-switch, .teacher-count-strip { grid-template-columns: 1fr; }
+  .scope-mode-switch, .scope-choice-grid, .teacher-count-strip { grid-template-columns: 1fr; }
   .teacher-count-strip > div { grid-column: auto; }
   .scope-setup-card { padding: 15px; }
   .requirements-details > summary { align-items: flex-start; }
