@@ -17,7 +17,7 @@ test('the build script excludes the dormant Gemini service from GitHub Pages', a
   assert.match(source, /await rm/);
 });
 
-test('package version is 0.5.1', async () => {
+test('package version is 0.6.0', async () => {
   const source = await readFile(new URL('../package.json', import.meta.url), 'utf8');
-  assert.equal(JSON.parse(source).version, '0.5.1');
+  assert.equal(JSON.parse(source).version, '0.6.0');
 });

@@ -212,14 +212,28 @@ function sortTasksForGreedy(tasks, activeTeachers, variant) {
   ) || a.subject.localeCompare(b.subject, 'ar') || a.section - b.section);
 }
 
-function greedyAssign(kind, activeTeachers, tasks, settings, variant) {
-  const assignments = [];
+function greedyAssign(
+  kind,
+  activeTeachers,
+  tasks,
+  settings,
+  variant,
+  fixedAssignments = [],
+  frozenTeacherIds = new Set(),
+) {
+  const assignments = [...fixedAssignments];
   const unassigned = [];
   const loads = new Map(activeTeachers.map((teacher) => [teacher.id, 0]));
+  const fixedTaskIds = new Set(fixedAssignments.map((assignment) => assignment.taskId));
 
-  for (const task of sortTasksForGreedy(tasks, activeTeachers, variant)) {
+  for (const assignment of fixedAssignments) {
+    loads.set(assignment.teacherId, (loads.get(assignment.teacherId) ?? 0) + assignment.periods);
+  }
+
+  const pendingTasks = tasks.filter((task) => !fixedTaskIds.has(task.id));
+  for (const task of sortTasksForGreedy(pendingTasks, activeTeachers, variant)) {
     const candidates = activeTeachers
-      .filter((teacher) => isEligible(teacher, task))
+      .filter((teacher) => !frozenTeacherIds.has(teacher.id) && isEligible(teacher, task))
       .map((teacher) => {
         const currentLoad = loads.get(teacher.id) ?? 0;
         const maxLoad = teacherMaxLoad(teacher, settings);
@@ -258,7 +272,15 @@ function greedyAssign(kind, activeTeachers, tasks, settings, variant) {
   return { assignments, unassigned };
 }
 
-function createRepairState(activeTeachers, tasks, assignments, settings, variant) {
+function createRepairState(
+  activeTeachers,
+  tasks,
+  assignments,
+  settings,
+  variant,
+  lockedTaskIds = new Set(),
+  frozenTeacherIds = new Set(),
+) {
   const teacherById = new Map(activeTeachers.map((teacher) => [teacher.id, teacher]));
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const placements = new Map(assignments.map((assignment) => [assignment.taskId, assignment.teacherId]));
@@ -277,6 +299,8 @@ function createRepairState(activeTeachers, tasks, assignments, settings, variant
     loads,
     settings,
     variant,
+    lockedTaskIds,
+    frozenTeacherIds,
   };
 }
 
@@ -335,7 +359,11 @@ function unassignTask(state, task) {
 function candidateInfos(kind, task, state, excludedTeacherIds = new Set()) {
   const assignments = repairAssignmentsView(state);
   return state.activeTeachers
-    .filter((teacher) => !excludedTeacherIds.has(teacher.id) && isEligible(teacher, task))
+    .filter((teacher) => (
+      !excludedTeacherIds.has(teacher.id)
+      && !state.frozenTeacherIds.has(teacher.id)
+      && isEligible(teacher, task)
+    ))
     .map((teacher) => {
       const currentLoad = state.loads.get(teacher.id) ?? 0;
       const maxLoad = teacherMaxLoad(teacher, state.settings);
@@ -362,12 +390,15 @@ function candidateInfos(kind, task, state, excludedTeacherIds = new Set()) {
 
 function alternativeTeacherCount(task, state, excludedTeacherId) {
   return state.activeTeachers.filter((teacher) => (
-    teacher.id !== excludedTeacherId && isEligible(teacher, task)
+    teacher.id !== excludedTeacherId
+    && !state.frozenTeacherIds.has(teacher.id)
+    && isEligible(teacher, task)
   )).length;
 }
 
 function relocationSubsets(tasks, neededPeriods, state, targetTeacherId) {
   const movable = tasks
+    .filter((task) => !state.lockedTaskIds.has(task.id))
     .map((task) => ({
       task,
       alternatives: alternativeTeacherCount(task, state, targetTeacherId),
@@ -494,8 +525,18 @@ function repairUnassigned(
   initialUnassigned,
   settings,
   variant,
+  lockedTaskIds = new Set(),
+  frozenTeacherIds = new Set(),
 ) {
-  const state = createRepairState(activeTeachers, tasks, initialAssignments, settings, variant);
+  const state = createRepairState(
+    activeTeachers,
+    tasks,
+    initialAssignments,
+    settings,
+    variant,
+    lockedTaskIds,
+    frozenTeacherIds,
+  );
   const initialPlacements = new Map(
     initialAssignments.map((assignment) => [assignment.taskId, assignment.teacherId]),
   );
@@ -529,7 +570,15 @@ function repairUnassigned(
   };
 }
 
-function mutateAssignments(activeTeachers, tasks, assignments, settings, variant) {
+function mutateAssignments(
+  activeTeachers,
+  tasks,
+  assignments,
+  settings,
+  variant,
+  lockedTaskIds = new Set(),
+  frozenTeacherIds = new Set(),
+) {
   if (!assignments.length || variant.mutationSteps <= 0) return assignments;
 
   const teacherById = new Map(activeTeachers.map((teacher) => [teacher.id, teacher]));
@@ -540,7 +589,7 @@ function mutateAssignments(activeTeachers, tasks, assignments, settings, variant
     loads.set(assignment.teacherId, (loads.get(assignment.teacherId) ?? 0) + assignment.periods);
   }
 
-  const assignedTaskIds = [...placements.keys()];
+  const assignedTaskIds = [...placements.keys()].filter((taskId) => !lockedTaskIds.has(taskId));
   for (let step = 0; step < variant.mutationSteps; step += 1) {
     const firstIndex = Math.floor(
       seededUnit(variant.seed, `mutation:first:${step}`) * assignedTaskIds.length,
@@ -556,7 +605,7 @@ function mutateAssignments(activeTeachers, tasks, assignments, settings, variant
       const compatible = assignedTaskIds
         .map((taskId) => taskById.get(taskId))
         .filter((taskB) => {
-          if (!taskB || taskB.id === taskA.id) return false;
+          if (!taskB || taskB.id === taskA.id || lockedTaskIds.has(taskB.id)) return false;
           const teacherBId = placements.get(taskB.id);
           if (!teacherBId || teacherBId === teacherAId) return false;
           const teacherB = teacherById.get(teacherBId);
@@ -589,7 +638,11 @@ function mutateAssignments(activeTeachers, tasks, assignments, settings, variant
     }
 
     const destinationCandidates = activeTeachers.filter((teacher) => {
-      if (teacher.id === teacherAId || !isEligible(teacher, taskA)) return false;
+      if (
+        teacher.id === teacherAId
+        || frozenTeacherIds.has(teacher.id)
+        || !isEligible(teacher, taskA)
+      ) return false;
       return (loads.get(teacher.id) ?? 0) + taskA.periods <= teacherMaxLoad(teacher, settings);
     });
     if (!destinationCandidates.length) continue;
@@ -681,6 +734,112 @@ function scenarioMetrics(activeTeachers, assignments, unassigned, settings) {
   };
 }
 
+
+function prepareFixedAssignments(activeTeachers, tasks, settings, fixedAssignments = []) {
+  const teacherById = new Map(activeTeachers.map((teacher) => [teacher.id, teacher]));
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const seenTaskIds = new Set();
+  const loads = new Map(activeTeachers.map((teacher) => [teacher.id, 0]));
+  const assignments = [];
+  const errors = [];
+
+  for (const fixed of fixedAssignments) {
+    const task = taskById.get(fixed.taskId);
+    const teacher = teacherById.get(fixed.teacherId);
+    if (!task) {
+      errors.push(`تعذر تثبيت تكليف غير موجود: ${fixed.taskId}.`);
+      continue;
+    }
+    if (!teacher) {
+      errors.push(`تعذر تثبيت ${task.grade} / ${task.section}: المعلم غير موجود أو غير نشط.`);
+      continue;
+    }
+    if (seenTaskIds.has(task.id)) {
+      errors.push(`التكليف ${task.grade} / ${task.section} مثبت أكثر من مرة.`);
+      continue;
+    }
+    if (!isEligible(teacher, task)) {
+      errors.push(`${teacher.name}: التكليف المثبت ${task.grade} / ${task.section} خارج نطاقه.`);
+      continue;
+    }
+    const nextLoad = (loads.get(teacher.id) ?? 0) + task.periods;
+    if (nextLoad > teacherMaxLoad(teacher, settings)) {
+      errors.push(`${teacher.name}: التكليفات المثبتة تتجاوز سقف النصاب.`);
+      continue;
+    }
+    seenTaskIds.add(task.id);
+    loads.set(teacher.id, nextLoad);
+    assignments.push(assignmentFromTask(task, teacher));
+  }
+
+  return {
+    assignments,
+    lockedTaskIds: seenTaskIds,
+    errors,
+  };
+}
+
+export function evaluateScenario(
+  teachers,
+  requirements,
+  settings = DEFAULT_SETTINGS,
+  assignments = [],
+  unassigned = [],
+  options = {},
+) {
+  const normalizedSettings = normalizeSettings(settings);
+  const activeTeachers = teachers.filter((teacher) => teacher.active);
+  const taskById = new Map(expandRequirements(requirements).map((task) => [task.id, task]));
+  const teacherById = new Map(activeTeachers.map((teacher) => [teacher.id, teacher]));
+  const normalizedAssignments = assignments.flatMap((assignment) => {
+    const task = taskById.get(assignment.taskId) ?? assignment;
+    const teacher = teacherById.get(assignment.teacherId);
+    return task && teacher ? [assignmentFromTask(task, teacher)] : [];
+  });
+  const normalizedUnassigned = unassigned.map((item) => taskById.get(item.id) ?? item);
+  const metrics = scenarioMetrics(
+    activeTeachers,
+    normalizedAssignments,
+    normalizedUnassigned,
+    normalizedSettings,
+  );
+  const signature = scenarioSignature(normalizedAssignments, normalizedUnassigned);
+
+  return {
+    id: options.id ?? modelId(signature),
+    style: options.style ?? 'balanced',
+    label: options.label ?? 'الخطة قيد التعديل',
+    tag: options.tag ?? 'مسودة',
+    description: options.description ?? 'خطة قابلة للتثبيت والنقل وإعادة توزيع الجزء غير المثبت.',
+    assignments: normalizedAssignments,
+    unassigned: normalizedUnassigned,
+    relocationCount: Number(options.relocationCount) || 0,
+    repairedCount: Number(options.repairedCount) || 0,
+    signature,
+    ...metrics,
+    score: metrics.rankScore,
+    warnings: buildWarnings(metrics.summaries, normalizedUnassigned),
+  };
+}
+
+export function validateFixedAssignments(
+  teachers,
+  requirements,
+  settings = DEFAULT_SETTINGS,
+  fixedAssignments = [],
+) {
+  const normalizedSettings = normalizeSettings(settings);
+  const activeTeachers = teachers.filter((teacher) => teacher.active);
+  const tasks = expandRequirements(requirements)
+    .filter((task) => task.periods > 0 && task.subject && task.grade);
+  return prepareFixedAssignments(
+    activeTeachers,
+    tasks,
+    normalizedSettings,
+    fixedAssignments,
+  ).errors;
+}
+
 export function generateScenario(
   kind,
   teachers,
@@ -693,8 +852,23 @@ export function generateScenario(
   const tasks = expandRequirements(requirements)
     .filter((task) => task.periods > 0 && task.subject && task.grade);
   const variant = options.variant ?? createVariant(options.seed ?? 0, options.attempt ?? 0);
+  const frozenTeacherIds = new Set(options.frozenTeacherIds || []);
+  const fixed = prepareFixedAssignments(
+    activeTeachers,
+    tasks,
+    normalizedSettings,
+    options.fixedAssignments || [],
+  );
 
-  const greedy = greedyAssign(kind, activeTeachers, tasks, normalizedSettings, variant);
+  const greedy = greedyAssign(
+    kind,
+    activeTeachers,
+    tasks,
+    normalizedSettings,
+    variant,
+    fixed.assignments,
+    frozenTeacherIds,
+  );
   const optimized = repairUnassigned(
     kind,
     activeTeachers,
@@ -703,6 +877,8 @@ export function generateScenario(
     greedy.unassigned,
     normalizedSettings,
     variant,
+    fixed.lockedTaskIds,
+    frozenTeacherIds,
   );
   const diversifiedAssignments = mutateAssignments(
     activeTeachers,
@@ -710,6 +886,8 @@ export function generateScenario(
     optimized.assignments,
     normalizedSettings,
     variant,
+    fixed.lockedTaskIds,
+    frozenTeacherIds,
   );
   const metrics = scenarioMetrics(
     activeTeachers,
@@ -732,7 +910,10 @@ export function generateScenario(
     signature,
     ...metrics,
     score: metrics.rankScore,
-    warnings: buildWarnings(metrics.summaries, optimized.unassigned),
+    warnings: [...new Set([
+      ...fixed.errors,
+      ...buildWarnings(metrics.summaries, optimized.unassigned),
+    ])],
   };
 }
 
@@ -839,6 +1020,8 @@ export function generateDistributionModels(
       seed,
       attempt,
       variant: createVariant(seed, attempt),
+      fixedAssignments: options.fixedAssignments || [],
+      frozenTeacherIds: options.frozenTeacherIds || [],
     });
     if (!excluded.has(scenario.signature)) candidates.push(scenario);
   }

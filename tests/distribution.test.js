@@ -300,3 +300,108 @@ test('smart repair finds the two-eighth-and-three-physics model requested by the
     3,
   );
 });
+
+test('fixed teacher distribution stays exactly unchanged during rebalancing', () => {
+  const base = seedSearch.models[0];
+  const lockedTeacherId = base.summaries.find((summary) => summary.assignments.length)?.teacherId;
+  assert.ok(lockedTeacherId);
+  const fixedAssignments = base.assignments
+    .filter((assignment) => assignment.teacherId === lockedTeacherId)
+    .map((assignment) => ({ taskId: assignment.taskId, teacherId: lockedTeacherId }));
+  const expectedTaskIds = fixedAssignments.map((item) => item.taskId).sort();
+
+  const regenerated = generateDistributionModels(
+    seedData.teachers,
+    seedData.requirements,
+    settings,
+    {
+      limit: 10,
+      attempts: 80,
+      seedOffset: 77,
+      fixedAssignments,
+      frozenTeacherIds: [lockedTeacherId],
+    },
+  );
+
+  assert.ok(regenerated.models.length > 0);
+  for (const model of regenerated.models) {
+    const actualTaskIds = model.assignments
+      .filter((assignment) => assignment.teacherId === lockedTeacherId)
+      .map((assignment) => assignment.taskId)
+      .sort();
+    assert.deepEqual(actualTaskIds, expectedTaskIds);
+    assert.equal(model.unassigned.length, 0);
+  }
+});
+
+test('an individually pinned task remains with its chosen teacher', () => {
+  const base = seedSearch.models[0];
+  const pinned = base.assignments[0];
+  const regenerated = generateDistributionModels(
+    seedData.teachers,
+    seedData.requirements,
+    settings,
+    {
+      limit: 10,
+      attempts: 80,
+      seedOffset: 91,
+      fixedAssignments: [{ taskId: pinned.taskId, teacherId: pinned.teacherId }],
+    },
+  );
+
+  assert.ok(regenerated.models.length > 0);
+  for (const model of regenerated.models) {
+    assert.equal(
+      model.assignments.find((assignment) => assignment.taskId === pinned.taskId)?.teacherId,
+      pinned.teacherId,
+    );
+  }
+});
+
+test('fixed assignment validation rejects a forbidden manual placement', async () => {
+  const { validateFixedAssignments } = await import('../src/engine/distribution.js');
+  const biologyTask = seedSearch.models[0].assignments.find((assignment) => assignment.subject === 'الأحياء');
+  const chemistryOnly = seedData.teachers.find((teacher) => teacher.specialty === 'الكيمياء');
+  const errors = validateFixedAssignments(
+    seedData.teachers,
+    seedData.requirements,
+    settings,
+    [{ taskId: biologyTask.taskId, teacherId: chemistryOnly.id }],
+  );
+  assert.match(errors.join(' '), /خارج نطاقه/);
+});
+
+test('scenario evaluation recalculates loads after a manual transfer', async () => {
+  const { evaluateScenario } = await import('../src/engine/distribution.js');
+  const base = seedSearch.models[0];
+  const biologyAssignment = base.assignments.find((assignment) => assignment.subject === 'الأحياء');
+  const currentTeacher = seedData.teachers.find((teacher) => teacher.id === biologyAssignment.teacherId);
+  const destination = seedData.teachers.find((teacher) => (
+    teacher.id !== currentTeacher.id && teacher.specialty === currentTeacher.specialty
+  ));
+  assert.ok(destination);
+
+  const beforeCurrent = base.summaries.find((summary) => summary.teacherId === currentTeacher.id).load;
+  const beforeDestination = base.summaries.find((summary) => summary.teacherId === destination.id).load;
+  const movedAssignments = base.assignments.map((assignment) => (
+    assignment.taskId === biologyAssignment.taskId
+      ? { ...assignment, teacherId: destination.id }
+      : assignment
+  ));
+  const evaluated = evaluateScenario(
+    seedData.teachers,
+    seedData.requirements,
+    settings,
+    movedAssignments,
+    base.unassigned,
+  );
+
+  assert.equal(
+    evaluated.summaries.find((summary) => summary.teacherId === currentTeacher.id).load,
+    beforeCurrent - biologyAssignment.periods,
+  );
+  assert.equal(
+    evaluated.summaries.find((summary) => summary.teacherId === destination.id).load,
+    beforeDestination + biologyAssignment.periods,
+  );
+});

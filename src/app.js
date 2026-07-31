@@ -2,6 +2,7 @@ import { seedData } from './data/seed.js';
 import {
   ASSIGNMENT_STATUS,
   buildInitialCustomSelection,
+  getAssignmentStatus,
   createDefaultAssignmentPolicy,
   describeAssignmentPolicy,
   normalizeAssignmentPolicy,
@@ -9,19 +10,32 @@ import {
   requirementLabel,
 } from './domain/assignmentPolicy.js';
 import {
+  evaluateScenario,
   generateDistributionModels,
   rankDistributionModels,
+  teacherMaxLoad,
+  validateFixedAssignments,
   validateInputs,
 } from './engine/distribution.js';
-import { clearAppData, clone, loadAppData, saveAppData } from './services/storage.js';
+import {
+  clearAppData,
+  clearWorkspace,
+  clone,
+  loadAppData,
+  loadWorkspace,
+  saveAppData,
+  saveWorkspace,
+} from './services/storage.js';
 import { exportScenarioCsv } from './services/export.js';
 
 const app = document.querySelector('#app');
 const MODEL_BATCH_SIZE = 20;
 const MAX_DISPLAY_MODELS = 100;
 
+const storedWorkspace = loadWorkspace();
+
 let state = {
-  step: 0,
+  step: storedWorkspace?.draft ? 3 : 0,
   data: loadAppData(seedData),
   scenarios: [],
   selectedId: 'balanced',
@@ -30,6 +44,8 @@ let state = {
   generating: false,
   generationRound: 0,
   searchStats: { attempts: 0, uniqueFound: 0, completeFound: 0 },
+  resultView: storedWorkspace?.draft ? 'draft' : 'models',
+  draft: storedWorkspace?.draft ?? null,
 };
 
 const esc = (value = '') => String(value).replace(
@@ -60,6 +76,27 @@ function invalidateResults() {
   state.errors = [];
   state.generationRound = 0;
   state.searchStats = { attempts: 0, uniqueFound: 0, completeFound: 0 };
+  state.resultView = 'models';
+  state.draft = null;
+  clearWorkspace();
+}
+
+function persistDraft() {
+  if (!state.draft) {
+    clearWorkspace();
+    return;
+  }
+  saveWorkspace({ draft: state.draft });
+}
+
+function markDraftChanged(notice = '') {
+  if (!state.draft) return;
+  state.draft.approved = false;
+  state.draft.approvedAt = '';
+  if (state.draft.scenario) state.draft.scenario.tag = 'مسودة';
+  state.draft.notice = notice;
+  state.draft.noticeType = 'success';
+  persistDraft();
 }
 
 function persistRender() {
@@ -403,7 +440,233 @@ function modelComparison() {
     </details>`;
 }
 
-function resultsPanel() {
+
+function ensureDraftShape() {
+  if (!state.draft) return null;
+  state.draft.lockedTeacherIds = Array.isArray(state.draft.lockedTeacherIds)
+    ? [...new Set(state.draft.lockedTeacherIds)]
+    : [];
+  state.draft.pinnedTaskIds = Array.isArray(state.draft.pinnedTaskIds)
+    ? [...new Set(state.draft.pinnedTaskIds)]
+    : [];
+  state.draft.selectedTaskId = String(state.draft.selectedTaskId || '');
+  state.draft.notice = String(state.draft.notice || '');
+  state.draft.noticeType = String(state.draft.noticeType || 'success');
+  state.draft.approved = Boolean(state.draft.approved);
+  state.draft.approvedAt = String(state.draft.approvedAt || '');
+  return state.draft;
+}
+
+function lockedTeacherSet() {
+  return new Set(ensureDraftShape()?.lockedTeacherIds || []);
+}
+
+function pinnedTaskSet() {
+  return new Set(ensureDraftShape()?.pinnedTaskIds || []);
+}
+
+function refreshDraftScenario(assignments, unassigned, notice = '') {
+  if (!state.draft) return;
+  const previous = state.draft.scenario || {};
+  state.draft.approved = false;
+  state.draft.approvedAt = '';
+  state.draft.scenario = evaluateScenario(
+    state.data.teachers,
+    state.data.requirements,
+    state.data.settings,
+    assignments,
+    unassigned,
+    {
+      id: 'draft-plan',
+      label: 'الخطة قيد التعديل',
+      tag: 'مسودة',
+      description: 'ثبّت التوزيع المقبول، وانقل شعبة عند الحاجة، ثم أعد توزيع الجزء المتبقي فقط.',
+      relocationCount: previous.relocationCount,
+      repairedCount: previous.repairedCount,
+    },
+  );
+  state.draft.notice = notice;
+  state.draft.noticeType = 'success';
+  persistDraft();
+}
+
+function draftFixedAssignments() {
+  const draft = ensureDraftShape();
+  if (!draft?.scenario) return [];
+  const lockedTeachers = lockedTeacherSet();
+  const pinnedTasks = pinnedTaskSet();
+  return draft.scenario.assignments
+    .filter((assignment) => (
+      lockedTeachers.has(assignment.teacherId) || pinnedTasks.has(assignment.taskId)
+    ))
+    .map((assignment) => ({
+      taskId: assignment.taskId,
+      teacherId: assignment.teacherId,
+    }));
+}
+
+function transferCandidates(assignment) {
+  if (!assignment || !state.draft?.scenario) return [];
+  const lockedTeachers = lockedTeacherSet();
+  const summaryByTeacher = new Map(
+    state.draft.scenario.summaries.map((summary) => [summary.teacherId, summary]),
+  );
+
+  return state.data.teachers
+    .filter((teacher) => (
+      teacher.active
+      && teacher.id !== assignment.teacherId
+      && !lockedTeachers.has(teacher.id)
+      && getAssignmentStatus(teacher, assignment) !== ASSIGNMENT_STATUS.FORBIDDEN
+    ))
+    .map((teacher) => {
+      const currentLoad = summaryByTeacher.get(teacher.id)?.load || 0;
+      const maxLoad = teacherMaxLoad(teacher, state.data.settings);
+      return {
+        teacher,
+        currentLoad,
+        projectedLoad: currentLoad + assignment.periods,
+        maxLoad,
+      };
+    })
+    .filter((candidate) => candidate.projectedLoad <= candidate.maxLoad)
+    .sort((a, b) => a.projectedLoad - b.projectedLoad
+      || a.teacher.name.localeCompare(b.teacher.name, 'ar'));
+}
+
+function draftTransferPanel() {
+  const draft = ensureDraftShape();
+  const scenario = draft?.scenario;
+  if (!draft?.selectedTaskId || !scenario) return '';
+  const assignment = scenario.assignments.find((item) => item.taskId === draft.selectedTaskId);
+  if (!assignment) return '';
+  const currentTeacher = state.data.teachers.find((teacher) => teacher.id === assignment.teacherId);
+  const candidates = transferCandidates(assignment);
+  const pinned = pinnedTaskSet().has(assignment.taskId);
+
+  return `
+    <section class="transfer-panel no-print">
+      <div class="transfer-heading">
+        <div>
+          <p class="eyebrow">نقل شعبة</p>
+          <h3>${esc(assignment.subject)} · ${esc(assignment.grade)} / ${assignment.section}</h3>
+          <p class="muted">حاليًا لدى ${esc(currentTeacher?.name || 'معلم غير معروف')} · ${assignment.periods} حصص.</p>
+        </div>
+        <button class="icon-button" data-action="cancel-transfer" title="إغلاق">×</button>
+      </div>
+      ${candidates.length ? `
+        <div class="transfer-candidates">
+          ${candidates.map((candidate) => `
+            <button class="transfer-candidate" data-action="move-task" data-task-id="${assignment.taskId}" data-teacher-id="${candidate.teacher.id}">
+              <strong>${esc(candidate.teacher.name)}</strong>
+              <span>${candidate.currentLoad} ← ${candidate.projectedLoad} من ${candidate.maxLoad}</span>
+            </button>`).join('')}
+        </div>` : '<div class="alert warning">لا يوجد معلم بديل مسموح له بهذه الشعبة ولديه سعة كافية.</div>'}
+      <div class="transfer-footer">
+        <span>${pinned ? 'هذه الشعبة مثبتة ولن تتغير عند إعادة التوزيع.' : 'عند نقل الشعبة ستُثبت تلقائيًا حتى لا يعيد المحرك إرجاعها.'}</span>
+        ${pinned ? `<button class="text-button" data-action="unpin-task" data-task-id="${assignment.taskId}">فك تثبيت الشعبة</button>` : ''}
+      </div>
+    </section>`;
+}
+
+function draftPanel() {
+  const draft = ensureDraftShape();
+  const scenario = draft?.scenario;
+  if (!scenario) {
+    state.resultView = 'models';
+    return modelResultsPanel();
+  }
+  const assignedPeriods = scenario.assignments.reduce((sum, item) => sum + item.periods, 0);
+  const lockedTeachers = lockedTeacherSet();
+  const pinnedTasks = pinnedTaskSet();
+  const approvedDate = draft.approvedAt
+    ? new Date(draft.approvedAt).toLocaleString('ar-OM', { dateStyle: 'medium', timeStyle: 'short' })
+    : '';
+
+  return `
+    <section class="stack-lg">
+      <div class="panel draft-hero">
+        <div>
+          <p class="eyebrow">مساحة العمل</p>
+          <h2>الخطة قيد التعديل ${draft.approved ? '<span class="approval-badge">معتمدة</span>' : ''}</h2>
+          <p class="muted">ثبّت المعلمين الذين أعجبك توزيعهم، وانقل أي شعبة بنقرة، ثم دع قِسطاس يعيد توزيع الباقي فقط.</p>
+          ${approvedDate ? `<small class="approved-date">آخر اعتماد: ${esc(approvedDate)}</small>` : ''}
+        </div>
+        <div class="actions no-print">
+          <button class="button secondary" data-action="view-models">العودة للنماذج</button>
+          <button class="button secondary" data-action="rebalance-draft" ${state.generating ? 'disabled' : ''}>${state.generating ? 'جارٍ إعادة التوزيع…' : 'أعد توزيع غير المثبت'}</button>
+          <button class="button primary" data-action="approve-draft">${draft.approved ? 'إعادة اعتماد الخطة' : 'اعتماد الخطة'}</button>
+        </div>
+      </div>
+
+      ${draft.notice ? `<div class="alert ${draft.noticeType === 'warning' ? 'warning' : draft.noticeType === 'error' ? 'error' : 'success'}">${esc(draft.notice)}</div>` : ''}
+      ${draftTransferPanel()}
+
+      <div class="panel stack-lg print-area">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">الخطة الحالية</p>
+            <h2>${esc(state.data.schoolName)} · ${esc(state.data.departmentName)}</h2>
+          </div>
+          <div class="actions no-print">
+            <button class="button secondary" data-action="export-draft">تصدير CSV</button>
+            <button class="button secondary" data-action="print">طباعة / PDF</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid four">
+          <article class="kpi"><span>الحصص المسندة</span><strong>${assignedPeriods}</strong></article>
+          <article class="kpi"><span>المعلمون المثبتون</span><strong>${lockedTeachers.size}</strong></article>
+          <article class="kpi"><span>الشعب المثبتة</span><strong>${pinnedTasks.size}</strong></article>
+          <article class="kpi"><span>فرق الأنصبة</span><strong>${scenario.loadSpread}</strong></article>
+        </div>
+
+        ${scenario.unassigned.length
+    ? `<div class="alert error">توجد ${scenario.unassigned.length} شعبة غير مسندة. خفف بعض القيود أو فك تثبيت جزء من الخطة.</div>`
+    : '<div class="alert success">جميع الشعب مسندة داخل القيود الحالية.</div>'}
+
+        <div class="teacher-results editable-results">
+          ${scenario.summaries.map((summaryItem) => {
+    const teacher = state.data.teachers.find((item) => item.id === summaryItem.teacherId);
+    if (!teacher) return '';
+    const locked = lockedTeachers.has(teacher.id);
+    const sortedAssignments = [...summaryItem.assignments].sort((a, b) => (
+      a.grade.localeCompare(b.grade, 'ar')
+      || a.subject.localeCompare(b.subject, 'ar')
+      || a.section - b.section
+    ));
+    return `
+              <article class="teacher-card editable-teacher-card ${locked ? 'locked' : ''}">
+                <header>
+                  <div>
+                    <h3>${esc(teacher.name)}</h3>
+                    <p>${esc(teacher.specialty)}${teacher.isLead ? ' · معلم أول' : ''}</p>
+                  </div>
+                  <div class="teacher-result-actions no-print">
+                    <span class="load-badge">${summaryItem.load} / ${summaryItem.maxLoad} حصة</span>
+                    <button class="lock-button ${locked ? 'active' : ''}" data-action="toggle-teacher-lock" data-id="${teacher.id}">
+                      ${locked ? 'مثبت · فك' : 'تثبيت التوزيع'}
+                    </button>
+                  </div>
+                </header>
+                <div class="assignment-buttons">
+                  ${sortedAssignments.map((assignment) => {
+    const pinned = pinnedTasks.has(assignment.taskId);
+    return `
+                    <button class="assignment-button ${pinned ? 'pinned' : ''}" data-action="select-transfer" data-task-id="${assignment.taskId}" ${locked ? 'disabled' : ''}>
+                      <span>${esc(assignment.grade)} / ${assignment.section} · ${esc(assignment.subject)}</span>
+                      <small>${pinned ? 'مثبتة' : 'نقل'} · ${assignment.periods}</small>
+                    </button>`;
+  }).join('') || '<span class="empty-assignment">لا توجد شعب مسندة</span>'}
+                </div>
+              </article>`;
+  }).join('')}
+        </div>
+      </div>
+    </section>`;
+}
+
+function modelResultsPanel() {
   const scenario = selected();
   const assignedPeriods = scenario?.assignments.reduce((sum, item) => sum + item.periods, 0) || 0;
 
@@ -420,6 +683,7 @@ function resultsPanel() {
           <p class="muted">${esc(scenario.description)}</p>
         </div>
         <div class="actions no-print">
+          <button class="button primary" data-action="adopt-model">اعتماد مبدئي وتعديل</button>
           <button class="button secondary" data-action="export">تصدير CSV</button>
           <button class="button secondary" data-action="print">طباعة / PDF</button>
         </div>
@@ -475,7 +739,10 @@ function resultsPanel() {
           <h2>نماذج التوزيع</h2>
           <p class="muted">ينشئ قِسطاس أكبر مجموعة عملية من الحلول الصحيحة والمختلفة، ثم يرتبها ويترك الاختيار لك.</p>
         </div>
-        <button class="button primary" data-action="generate" ${state.generating ? 'disabled' : ''}>${state.generating ? 'جارٍ البحث عن النماذج…' : 'ولّد نماذج التوزيع'}</button>
+        <div class="actions no-print">
+          ${state.draft ? '<button class="button secondary" data-action="view-draft">فتح الخطة قيد التعديل</button>' : ''}
+          <button class="button primary" data-action="generate" ${state.generating ? 'disabled' : ''}>${state.generating ? 'جارٍ البحث عن النماذج…' : 'ولّد نماذج التوزيع'}</button>
+        </div>
       </div>
 
       ${state.errors.length ? `<div class="alert error"><strong>راجع هذه النقاط:</strong><ul>${state.errors.map((error) => `<li>${esc(error)}</li>`).join('')}</ul></div>` : ''}
@@ -483,6 +750,188 @@ function resultsPanel() {
       ${result}
 
     </section>`;
+}
+
+function resultsPanel() {
+  return state.resultView === 'draft' && state.draft
+    ? draftPanel()
+    : modelResultsPanel();
+}
+
+
+function adoptSelectedModel() {
+  const scenario = selected();
+  if (!scenario) return;
+  state.draft = {
+    sourceScenarioId: scenario.id,
+    scenario: evaluateScenario(
+      state.data.teachers,
+      state.data.requirements,
+      state.data.settings,
+      scenario.assignments,
+      scenario.unassigned,
+      {
+        id: 'draft-plan',
+        label: 'الخطة قيد التعديل',
+        tag: 'مسودة',
+        description: 'خطة مأخوذة من أحد النماذج، ويمكن تثبيت أجزاء منها أو نقل الشعب.',
+        relocationCount: scenario.relocationCount,
+        repairedCount: scenario.repairedCount,
+      },
+    ),
+    lockedTeacherIds: [],
+    pinnedTaskIds: [],
+    selectedTaskId: '',
+    approved: false,
+    approvedAt: '',
+    notice: `تم فتح ${scenario.label} للتعديل. ثبّت المقبول ثم أعد توزيع الباقي.`,
+    noticeType: 'success',
+    rebalanceRound: 0,
+  };
+  state.resultView = 'draft';
+  state.step = 3;
+  persistDraft();
+  render();
+}
+
+function approveDraft() {
+  const draft = ensureDraftShape();
+  if (!draft?.scenario) return;
+  if (draft.scenario.unassigned.length) {
+    draft.approved = false;
+    draft.notice = 'لا يمكن اعتماد الخطة قبل إسناد جميع الشعب.';
+    draft.noticeType = 'warning';
+    persistDraft();
+    render();
+    return;
+  }
+  draft.approved = true;
+  draft.approvedAt = new Date().toISOString();
+  draft.notice = 'تم اعتماد الخطة وحفظها على هذا الجهاز.';
+  draft.noticeType = 'success';
+  draft.scenario.tag = 'معتمدة';
+  persistDraft();
+  render();
+}
+
+function moveDraftTask(taskId, teacherId) {
+  const draft = ensureDraftShape();
+  const scenario = draft?.scenario;
+  if (!scenario) return;
+  const assignment = scenario.assignments.find((item) => item.taskId === taskId);
+  const destination = state.data.teachers.find((teacher) => teacher.id === teacherId);
+  if (!assignment || !destination) return;
+  const lockedTeachers = lockedTeacherSet();
+  if (lockedTeachers.has(assignment.teacherId) || lockedTeachers.has(destination.id)) {
+    draft.notice = 'فك تثبيت المعلم أولًا قبل تغيير شعبه.';
+    draft.noticeType = 'warning';
+    persistDraft();
+    render();
+    return;
+  }
+  const candidate = transferCandidates(assignment).find((item) => item.teacher.id === teacherId);
+  if (!candidate) {
+    draft.notice = 'تعذر النقل: المعلم البديل خارج النطاق أو سيجاوز سقف النصاب.';
+    draft.noticeType = 'warning';
+    persistDraft();
+    render();
+    return;
+  }
+
+  const assignments = scenario.assignments.map((item) => (
+    item.taskId === taskId
+      ? {
+        ...item,
+        teacherId: destination.id,
+        preference: getAssignmentStatus(destination, item),
+      }
+      : item
+  ));
+  const pinned = pinnedTaskSet();
+  pinned.add(taskId);
+  draft.pinnedTaskIds = [...pinned];
+  draft.selectedTaskId = '';
+  refreshDraftScenario(
+    assignments,
+    scenario.unassigned,
+    `تم نقل ${assignment.subject} · ${assignment.grade} / ${assignment.section} إلى ${destination.name} وتثبيت الشعبة.`,
+  );
+  render();
+}
+
+async function rebalanceDraft() {
+  const draft = ensureDraftShape();
+  if (!draft?.scenario) return;
+  const fixedAssignments = draftFixedAssignments();
+  const frozenTeacherIds = [...lockedTeacherSet()];
+  const fixedErrors = validateFixedAssignments(
+    state.data.teachers,
+    state.data.requirements,
+    state.data.settings,
+    fixedAssignments,
+  );
+  if (fixedErrors.length) {
+    draft.notice = fixedErrors.join(' ');
+    draft.noticeType = 'warning';
+    persistDraft();
+    render();
+    return;
+  }
+
+  state.generating = true;
+  draft.notice = '';
+  persistDraft();
+  render();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  try {
+    const round = Number(draft.rebalanceRound) || 0;
+    const result = generateDistributionModels(
+      state.data.teachers,
+      state.data.requirements,
+      state.data.settings,
+      {
+        limit: MODEL_BATCH_SIZE,
+        attempts: 120,
+        seedOffset: 10_000 + round,
+        fixedAssignments,
+        frozenTeacherIds,
+      },
+    );
+    const complete = result.models.find((model) => (
+      model.unassigned.length === 0 && model.overloadCount === 0
+    ));
+    if (!complete) {
+      draft.notice = 'لم يجد قِسطاس توزيعًا مكتملًا مع التثبيت الحالي. فك تثبيت معلم أو شعبة ثم أعد المحاولة.';
+      draft.noticeType = 'warning';
+    } else {
+      draft.scenario = evaluateScenario(
+        state.data.teachers,
+        state.data.requirements,
+        state.data.settings,
+        complete.assignments,
+        complete.unassigned,
+        {
+          id: 'draft-plan',
+          label: 'الخطة قيد التعديل',
+          tag: 'مسودة',
+          description: 'أعيد توزيع الجزء غير المثبت مع الحفاظ على قراراتك.',
+          relocationCount: complete.relocationCount,
+          repairedCount: complete.repairedCount,
+        },
+      );
+      draft.approved = false;
+      draft.approvedAt = '';
+      draft.selectedTaskId = '';
+      draft.rebalanceRound = round + 1;
+      draft.notice = `حافظ قِسطاس على ${fixedAssignments.length} تكليفات مثبتة، وطبّق أفضل نموذج من ${result.models.length} بدائل للجزء المتبقي.`;
+      draft.noticeType = 'success';
+    }
+  } finally {
+    state.generating = false;
+    persistDraft();
+    render();
+  }
 }
 
 function render() {
@@ -497,7 +946,7 @@ function render() {
       <main>
         <section class="intro">
           <div>
-            <span class="status-pill">الإصدار 0.5.1 · محرك محلي مستقر</span>
+            <span class="status-pill">الإصدار 0.6.0 · تثبيت ونقل وإعادة توزيع</span>
             <h1>حدّد من يدرّس ماذا.<br>وقِسطاس يوزّع الباقي.</h1>
             <p>حدّد نطاق كل معلم فقط. قِسطاس يبحث عن نماذج صحيحة ومتنوعة، ثم يعرضها مرتبة لتختار الأنسب.</p>
           </div>
@@ -513,7 +962,7 @@ function render() {
       : state.step === 2 ? requirementsPanel() : resultsPanel()}
         <div class="footer-nav no-print">
           <button class="button secondary" data-action="prev" ${state.step === 0 ? 'disabled' : ''}>السابق</button>
-          <button class="button primary" data-action="next">${state.step < 3 ? 'التالي' : 'ولّد نماذج التوزيع'}</button>
+          <button class="button primary" data-action="next">${state.step < 3 ? 'التالي' : state.resultView === 'draft' && state.draft ? 'اعتماد الخطة' : 'ولّد نماذج التوزيع'}</button>
         </div>
       </main>
     </div>`;
@@ -592,7 +1041,8 @@ app.addEventListener('click', async (event) => {
     if (state.step < 3) {
       state.step += 1;
       render();
-    } else await generate(false);
+    } else if (state.resultView === 'draft' && state.draft) approveDraft();
+    else await generate(false);
   }
 
   if (action === 'reset') {
@@ -607,6 +1057,8 @@ app.addEventListener('click', async (event) => {
       generating: false,
       generationRound: 0,
       searchStats: { attempts: 0, uniqueFound: 0, completeFound: 0 },
+      resultView: 'models',
+      draft: null,
     };
     persistRender();
   }
@@ -678,6 +1130,61 @@ app.addEventListener('click', async (event) => {
   }
 
   if (action === 'generate-more') await generate(true);
+
+  if (action === 'adopt-model') adoptSelectedModel();
+
+  if (action === 'view-models') {
+    state.resultView = 'models';
+    render();
+  }
+
+  if (action === 'view-draft' && state.draft) {
+    state.resultView = 'draft';
+    render();
+  }
+
+  if (action === 'toggle-teacher-lock' && state.draft) {
+    const locked = lockedTeacherSet();
+    if (locked.has(button.dataset.id)) locked.delete(button.dataset.id);
+    else locked.add(button.dataset.id);
+    state.draft.lockedTeacherIds = [...locked];
+    state.draft.selectedTaskId = '';
+    markDraftChanged(locked.has(button.dataset.id)
+      ? 'تم تثبيت توزيع المعلم. لن تتغير شعبه عند إعادة التوزيع.'
+      : 'تم فك تثبيت المعلم، ويمكن لقِسطاس إعادة توزيع شعبه.');
+    render();
+  }
+
+  if (action === 'select-transfer' && state.draft) {
+    state.draft.selectedTaskId = button.dataset.taskId || '';
+    state.draft.notice = '';
+    persistDraft();
+    render();
+  }
+
+  if (action === 'cancel-transfer' && state.draft) {
+    state.draft.selectedTaskId = '';
+    persistDraft();
+    render();
+  }
+
+  if (action === 'move-task') moveDraftTask(button.dataset.taskId, button.dataset.teacherId);
+
+  if (action === 'unpin-task' && state.draft) {
+    const pinned = pinnedTaskSet();
+    pinned.delete(button.dataset.taskId);
+    state.draft.pinnedTaskIds = [...pinned];
+    state.draft.selectedTaskId = '';
+    markDraftChanged('تم فك تثبيت الشعبة، ويمكن إعادة توزيعها لاحقًا.');
+    render();
+  }
+
+  if (action === 'rebalance-draft') await rebalanceDraft();
+  if (action === 'approve-draft') approveDraft();
+
+  if (action === 'export-draft' && state.draft?.scenario) {
+    exportScenarioCsv(state.draft.scenario, state.data.teachers);
+  }
 
   if (action === 'export' && selected()) exportScenarioCsv(selected(), state.data.teachers);
   if (action === 'print') window.print();

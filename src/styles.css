@@ -427,3 +427,133 @@ summary { cursor: pointer; font-weight: 700; }
   .model-tag { display: flex; width: fit-content; margin: 7px 0 0; }
 }
 
+
+/* v0.6: draft editing, locks and one-click transfers */
+.draft-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+.approval-badge {
+  display: inline-flex;
+  margin-inline-start: 8px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #e7f8ef;
+  color: #147245;
+  font-size: 11px;
+  vertical-align: middle;
+}
+.approved-date { display: block; color: var(--muted); margin-top: 7px; }
+.editable-results { align-items: start; }
+.editable-teacher-card { transition: border-color .15s, box-shadow .15s, background .15s; }
+.editable-teacher-card.locked {
+  border-color: #8ccbc1;
+  background: #f2fbf8;
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, .06);
+}
+.teacher-result-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.lock-button {
+  border: 1px solid #cddbd8;
+  border-radius: 9px;
+  padding: 6px 9px;
+  background: #fff;
+  color: #45615e;
+  font-size: 11px;
+  font-weight: 700;
+}
+.lock-button.active {
+  border-color: #78bdb1;
+  background: #e6f7f2;
+  color: #0b6758;
+}
+.assignment-buttons { display: flex; flex-wrap: wrap; gap: 7px; }
+.assignment-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #e0e9e7;
+  border-radius: 10px;
+  padding: 7px 9px;
+  background: #f8faf9;
+  color: #263b39;
+  text-align: right;
+}
+.assignment-button:hover:not(:disabled) {
+  border-color: #82c5ba;
+  background: #eef9f6;
+}
+.assignment-button small {
+  color: var(--primary-dark);
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.assignment-button.pinned {
+  border-color: #dbbf72;
+  background: #fff9e8;
+}
+.assignment-button.pinned small { color: #8a5a00; }
+.assignment-button:disabled { opacity: .72; cursor: not-allowed; }
+.empty-assignment { color: var(--muted); font-size: 11px; }
+.transfer-panel {
+  display: grid;
+  gap: 15px;
+  padding: 20px;
+  border: 1px solid #9fd3ca;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #ffffff, #eef9f6);
+  box-shadow: 0 14px 35px rgba(15, 118, 110, .09);
+}
+.transfer-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+.transfer-heading h3 { margin-bottom: 5px; }
+.transfer-candidates {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+.transfer-candidate {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #d7e7e4;
+  border-radius: 13px;
+  padding: 12px;
+  background: #fff;
+  color: var(--ink);
+  text-align: right;
+}
+.transfer-candidate:hover { border-color: var(--primary); background: #f4fbf9; }
+.transfer-candidate span { color: var(--muted); font-size: 11px; }
+.transfer-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .draft-hero { align-items: stretch; flex-direction: column; }
+  .transfer-candidates { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 580px) {
+  .teacher-result-actions { width: 100%; justify-content: flex-start; }
+  .editable-teacher-card header { flex-direction: column; }
+  .assignment-button { width: 100%; justify-content: space-between; }
+  .transfer-candidates { grid-template-columns: 1fr; }
+  .transfer-footer { align-items: flex-start; flex-direction: column; }
+}

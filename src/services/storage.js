@@ -6,6 +6,7 @@ import {
 } from '../domain/assignmentPolicy.js';
 
 const STORAGE_KEY = 'qistas:v1';
+const WORKSPACE_KEY = 'qistas:workspace:v1';
 
 export function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -87,4 +88,25 @@ export function saveAppData(data) {
 
 export function clearAppData() {
   localStorage.removeItem(STORAGE_KEY);
+  localStorage.removeItem(WORKSPACE_KEY);
+}
+
+
+export function loadWorkspace() {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveWorkspace(workspace) {
+  localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspace));
+}
+
+export function clearWorkspace() {
+  localStorage.removeItem(WORKSPACE_KEY);
 }
