@@ -169,6 +169,8 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
     0,
   );
   const requirementCount = (data.requirements || []).length;
+  const reportSubjectCount = new Set((data.requirements || []).map((requirement) => requirement.subject)).size;
+  const reportScopeClass = reportSubjectCount === 1 ? 'report-single-subject' : 'report-multi-subject';
   const reportDensity = teacherCount <= 7 && assignmentGroupCount <= 13 && requirementCount <= 6
     ? 'spacious'
     : (teacherCount <= 10 && assignmentGroupCount <= 24 && requirementCount <= 10 ? 'standard' : 'compact');
@@ -247,10 +249,11 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
     .teacher-table tbody tr:last-child td { border-bottom: 0; }
     .teacher-table th:last-child, .teacher-table td:last-child { border-left: 0; }
     .index-cell { width: 3.5%; text-align: center; font-weight: 800; }
-    .teacher-name { width: 12.5%; }
+    .teacher-name { width: 17.5%; }
+    .teacher-name strong { display: block; white-space: normal; line-height: 1.25; }
     .teacher-table th:nth-child(3) { width: 8.5%; }
     .teacher-table th:nth-child(4) { width: 7.5%; }
-    .teacher-table th:nth-child(5) { width: 51%; }
+    .teacher-table th:nth-child(5) { width: 46%; }
     .teacher-table th:nth-child(6) { width: 7.5%; }
     .teacher-table th:nth-child(7) { width: 9.5%; }
     .role-badge { display: inline-block; border-radius: 999px; padding: 1px 5px; background: #edf3f2; color: #405c58; font-size: 6.5pt; font-weight: 700; white-space: nowrap; }
@@ -310,7 +313,7 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
     .signature strong { display: inline-block; color: #284743; margin-left: 8px; }
     .report-footer { margin-top: 4px; padding-top: 3px; border-top: 1px solid #dfe8e6; display: flex; justify-content: space-between; color: #7a8785; font-size: 6.2pt; }
 
-    /* v1.3.3: report density adapts to the actual plan instead of shrinking every report. */
+    /* v1.3.4: report density adapts to plan size, with wider teacher names and a leaner assignments column. */
     .report {
       min-height: 197mm;
       display: flex;
@@ -342,10 +345,10 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
     .report-spacious .teacher-table { font-size: 8.25pt; border-radius: 11px; }
     .report-spacious .teacher-table th { padding: 6px 6px; }
     .report-spacious .teacher-table td { padding: 6px 6px; }
-    .report-spacious .teacher-name { width: 13%; }
+    .report-spacious .teacher-name { width: 18%; }
     .report-spacious .teacher-table th:nth-child(3) { width: 9%; }
     .report-spacious .teacher-table th:nth-child(4) { width: 7%; }
-    .report-spacious .teacher-table th:nth-child(5) { width: 52.5%; }
+    .report-spacious .teacher-table th:nth-child(5) { width: 47.5%; }
     .report-spacious .teacher-table th:nth-child(6) { width: 7%; }
     .report-spacious .teacher-table th:nth-child(7) { width: 8%; }
     .report-spacious .role-badge { padding: 2px 7px; font-size: 7.1pt; }
@@ -365,6 +368,10 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
     .report-spacious .signatures { gap: 20px; padding-top: 13px; }
     .report-spacious .signature { min-height: 40px; padding-top: 6px; font-size: 8.1pt; }
     .report-spacious .report-footer { margin-top: 8px; padding-top: 5px; font-size: 7pt; }
+
+    /* Single-subject plans repeat the same specialty, so teacher names deserve more room. */
+    .report-spacious.report-single-subject .teacher-name { width: 20%; }
+    .report-spacious.report-single-subject .teacher-table th:nth-child(5) { width: 45.5%; }
 
     .report-standard .report-header { padding: 8px 12px 9px; }
     .report-standard .brand-mark { width: 35px; height: 35px; font-size: 19px; }
@@ -390,6 +397,10 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
     .report-standard .signatures { padding-top: 9px; }
     .report-standard .signature { min-height: 34px; font-size: 7.6pt; }
     .report-standard .report-footer { font-size: 6.7pt; }
+    .report-standard.report-single-subject .teacher-name,
+    .report-compact.report-single-subject .teacher-name { width: 19%; }
+    .report-standard.report-single-subject .teacher-table th:nth-child(5),
+    .report-compact.report-single-subject .teacher-table th:nth-child(5) { width: 44.5%; }
 
     .report-compact { min-height: 0; }
     .report-compact .signatures { margin-top: 5px; }
@@ -406,7 +417,7 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
   </style>
 </head>
 <body>
-  <main class="report report-${reportDensity}">
+  <main class="report report-${reportDensity} ${reportScopeClass}">
     <header class="report-header">
       <div class="header-row">
         <div class="brand">

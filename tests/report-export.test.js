@@ -13,7 +13,7 @@ const data = {
   academicYear: '2026/2027',
   settings: { teacherMaxLoad: 18, leadMaxLoad: 12 },
   teachers: [
-    { id: 't1', name: 'معلم أحياء 1', specialty: 'الأحياء', active: true, isLead: false },
+    { id: 't1', name: 'عبدالعزيز اليحيائي', specialty: 'الأحياء', active: true, isLead: false },
     { id: 'lead', name: 'وليد الهنائي', specialty: 'الفيزياء', active: true, isLead: true },
   ],
   requirements: [
@@ -114,10 +114,34 @@ test('direct PDF writer supports multiple landscape pages', () => {
 
 test('small and medium plans receive a spacious readable report density', () => {
   const html = buildScenarioReportHtml(scenario, data, { approved: true });
-  assert.match(html, /class="report report-spacious"/);
+  assert.match(html, /class="report report-spacious report-multi-subject"/);
   assert.match(html, /\.report \{[\s\S]*min-height: 197mm;/);
   assert.match(html, /\.report-spacious \.teacher-table td \{ padding: 6px 6px; \}/);
+  assert.match(html, /\.report-spacious \.teacher-name \{ width: 18%; \}/);
+  assert.match(html, /\.report-spacious \.teacher-table th:nth-child\(5\) \{ width: 47\.5%; \}/);
+  assert.match(html, /\.teacher-name strong \{ display: block; white-space: normal; line-height: 1\.25; \}/);
+  assert.match(html, /عبدالعزيز اليحيائي/);
   assert.match(html, /\.signatures \{ margin-top: auto; \}/);
+});
+
+test('single-subject reports give long teacher names more room than assignments', () => {
+  const singleData = {
+    ...data,
+    departmentName: 'التربية الإسلامية',
+    teachers: data.teachers.map((teacher, index) => ({
+      ...teacher,
+      name: index === 0 ? 'عبدالعزيز اليحيائي' : teacher.name,
+      specialty: 'التربية الإسلامية',
+    })),
+    requirements: [
+      { id: 'islamic8', grade: 'الثامن', subject: 'التربية الإسلامية', sections: 4, periodsPerSection: 2 },
+    ],
+  };
+  const html = buildScenarioReportHtml(scenario, singleData, { approved: true });
+  assert.match(html, /class="report report-spacious report-single-subject"/);
+  assert.match(html, /\.report-spacious\.report-single-subject \.teacher-name \{ width: 20%; \}/);
+  assert.match(html, /\.report-spacious\.report-single-subject \.teacher-table th:nth-child\(5\) \{ width: 45\.5%; \}/);
+  assert.match(html, /عبدالعزيز اليحيائي/);
 });
 
 test('large plans fall back to compact density instead of forcing one oversized page', () => {
@@ -154,6 +178,6 @@ test('large plans fall back to compact density instead of forcing one oversized 
     loadSpread: 0,
   };
   const html = buildScenarioReportHtml(largeScenario, largeData, { approved: true });
-  assert.match(html, /class="report report-compact"/);
+  assert.match(html, /class="report report-compact report-single-subject"/);
   assert.match(html, /\.report-compact \{ min-height: 0; \}/);
 });
