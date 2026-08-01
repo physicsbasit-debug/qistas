@@ -5,6 +5,7 @@ import {
   formatSectionRanges,
   groupTeacherAssignments,
 } from '../src/services/export.js';
+import { A4_LANDSCAPE_PT, buildPdfFromJpegPages } from '../src/services/pdfExport.js';
 
 const data = {
   schoolName: 'مدرسة الباسط للتعليم الأساسي (8-10)',
@@ -84,4 +85,29 @@ test('print layout avoids the overflow that created a blank second page', () => 
   const html = buildScenarioReportHtml(scenario, data, { approved: true });
   assert.match(html, /@media print \{[\s\S]*html, body \{ width: auto; min-height: 0; \}/);
   assert.doesNotMatch(html, /html, body \{ width: 297mm; min-height: 210mm; \}/);
+});
+
+
+test('direct PDF writer creates a real A4 landscape PDF without printer settings', () => {
+  const bytes = buildPdfFromJpegPages([
+    { width: 2246, height: 1588, bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]) },
+  ]);
+  const text = new TextDecoder('latin1').decode(bytes);
+  assert.equal(text.slice(0, 8), '%PDF-1.4');
+  assert.match(text, new RegExp(`/MediaBox \\[0 0 ${A4_LANDSCAPE_PT.width} ${A4_LANDSCAPE_PT.height}\\]`));
+  assert.match(text, /\/Count 1/);
+  assert.match(text, /\/Filter \/DCTDecode/);
+  assert.match(text, /xref/);
+  assert.match(text, /%%EOF/);
+});
+
+test('direct PDF writer supports multiple landscape pages', () => {
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+  const bytes = buildPdfFromJpegPages([
+    { width: 2246, height: 1588, bytes: jpeg },
+    { width: 2246, height: 1588, bytes: jpeg },
+  ]);
+  const text = new TextDecoder('latin1').decode(bytes);
+  assert.match(text, /\/Count 2/);
+  assert.equal((text.match(/\/Type \/Page /g) || []).length, 2);
 });

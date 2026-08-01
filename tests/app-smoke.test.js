@@ -47,7 +47,7 @@ test('app keeps the existing distribution workflow after merging setup sections'
   assert.match(appRoot.innerHTML, /عدد المعلمين/);
   assert.match(appRoot.innerHTML, /الشعب والحصص/);
   assert.match(appRoot.innerHTML, /الخطوة 1 من 3/);
-  assert.match(appRoot.innerHTML, /الإصدار 1\.3\.1/);
+  assert.match(appRoot.innerHTML, /الإصدار 1\.3\.2/);
   assert.match(appRoot.innerHTML, /خطّط الأنصبة بوضوح/);
   assert.match(appRoot.innerHTML, /واعتمد التوزيع بثقة/);
   assert.match(appRoot.innerHTML, /إجمالي الحصص الأسبوعية/);
@@ -69,6 +69,7 @@ test('app keeps the existing distribution workflow after merging setup sections'
   await click(clickEvent({ action: 'step', id: '2' }));
   assert.match(appRoot.innerHTML, /نماذج التوزيع/);
   await click(clickEvent({ action: 'generate' }));
+  assert.match(appRoot.innerHTML, /تنزيل PDF رسمي/);
   assert.match(appRoot.innerHTML, /عثر قِسطاس على نموذج واحد مختلف/);
   assert.match(appRoot.innerHTML, /النموذج 1 من 1/);
   assert.match(appRoot.innerHTML, /نموذج بديل/);

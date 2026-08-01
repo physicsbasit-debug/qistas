@@ -30,7 +30,7 @@ import {
   savePlanLibrary,
   saveWorkspace,
 } from './services/storage.js';
-import { printScenarioReport } from './services/export.js';
+import { exportScenarioPdf } from './services/pdfExport.js';
 import { exportScenarioExcel } from './services/excelExport.js';
 import {
   buildRequirementsForScope,
@@ -1066,7 +1066,7 @@ function draftPanel() {
           </div>
           <div class="actions no-print">
             <button class="button secondary" data-action="export-draft"><span aria-hidden="true">⇩</span> تصدير Excel</button>
-            <button class="button secondary" data-action="print"><span aria-hidden="true">▤</span> تقرير PDF</button>
+            <button class="button secondary" data-action="print"><span aria-hidden="true">▤</span> تنزيل PDF رسمي</button>
           </div>
         </div>
 
@@ -1193,7 +1193,7 @@ function modelResultsPanel() {
         <div class="actions no-print">
           ${state.partialPreview
     ? '<button class="button secondary" data-action="generate">إعادة فحص الخطة</button>'
-    : '<button class="button primary" data-action="adopt-model">اعتماد مبدئي وتعديل</button><button class="button secondary" data-action="export"><span aria-hidden="true">⇩</span> تصدير Excel</button><button class="button secondary" data-action="print"><span aria-hidden="true">▤</span> تقرير PDF</button>'}
+    : '<button class="button primary" data-action="adopt-model">اعتماد مبدئي وتعديل</button><button class="button secondary" data-action="export"><span aria-hidden="true">⇩</span> تصدير Excel</button><button class="button secondary" data-action="print"><span aria-hidden="true">▤</span> تنزيل PDF رسمي</button>'}
         </div>
       </div>
 
@@ -1480,7 +1480,7 @@ function render() {
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.3.1 · فحص الجاهزية قبل التوزيع</span>
+            <span class="status-pill">الإصدار 1.3.2 · تصدير PDF مباشر</span>
             <h1>خطّط الأنصبة بوضوح،<br><em>واعتمد التوزيع بثقة.</em></h1>
             <p>حدّد المادة أو القسم، أدخل بيانات الشعب والمعلمين، ثم راجع توزيعًا متوازنًا واطلب بديلًا عند الحاجة.</p>
             <div class="hero-features"><span>✓ تهيئة حسب المادة</span><span>✓ الصفوف من 1 إلى 12</span><span>✓ بدائل محفوظة عند الطلب</span></div>
@@ -1891,12 +1891,24 @@ app.addEventListener('click', async (event) => {
     const isDraft = state.resultView === 'draft' && state.draft?.scenario;
     const scenario = isDraft ? state.draft.scenario : selected();
     if (scenario) {
-      printScenarioReport(scenario, state.data, {
-        approved: Boolean(isDraft && state.draft.approved),
-        approvedAt: isDraft ? state.draft.approvedAt : '',
-        isDraft: Boolean(isDraft && !state.draft.approved),
-        planLabel: scenario.label,
-      });
+      try {
+        await exportScenarioPdf(scenario, state.data, {
+          approved: Boolean(isDraft && state.draft.approved),
+          approvedAt: isDraft ? state.draft.approvedAt : '',
+          isDraft: Boolean(isDraft && !state.draft.approved),
+          planLabel: scenario.label,
+        });
+      } catch (error) {
+        const message = error?.message || 'تعذر إنشاء ملف PDF.';
+        if (isDraft && state.draft) {
+          state.draft.notice = message;
+          state.draft.noticeType = 'error';
+        } else {
+          state.notice = message;
+          state.noticeType = 'error';
+        }
+        render();
+      }
     }
   }
 
