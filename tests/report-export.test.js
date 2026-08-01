@@ -111,3 +111,49 @@ test('direct PDF writer supports multiple landscape pages', () => {
   assert.match(text, /\/Count 2/);
   assert.equal((text.match(/\/Type \/Page /g) || []).length, 2);
 });
+
+test('small and medium plans receive a spacious readable report density', () => {
+  const html = buildScenarioReportHtml(scenario, data, { approved: true });
+  assert.match(html, /class="report report-spacious"/);
+  assert.match(html, /\.report \{[\s\S]*min-height: 197mm;/);
+  assert.match(html, /\.report-spacious \.teacher-table td \{ padding: 6px 6px; \}/);
+  assert.match(html, /\.signatures \{ margin-top: auto; \}/);
+});
+
+test('large plans fall back to compact density instead of forcing one oversized page', () => {
+  const manyTeachers = Array.from({ length: 12 }, (_, index) => ({
+    id: `teacher-${index + 1}`,
+    name: `معلم ${index + 1}`,
+    specialty: 'اللغة العربية',
+    active: true,
+    isLead: index === 0,
+  }));
+  const largeData = {
+    ...data,
+    departmentName: 'اللغة العربية',
+    teachers: manyTeachers,
+    requirements: Array.from({ length: 12 }, (_, index) => ({
+      id: `r-${index + 1}`,
+      grade: index < 6 ? 'الخامس' : 'السادس',
+      subject: 'اللغة العربية',
+      sections: 1,
+      periodsPerSection: 1,
+    })),
+  };
+  const largeScenario = {
+    ...scenario,
+    assignments: [],
+    summaries: manyTeachers.map((teacher) => ({
+      teacherId: teacher.id,
+      load: 0,
+      maxLoad: teacher.isLead ? 12 : 18,
+      assignments: [],
+    })),
+    highestLoad: 0,
+    lowestLoad: 0,
+    loadSpread: 0,
+  };
+  const html = buildScenarioReportHtml(largeScenario, largeData, { approved: true });
+  assert.match(html, /class="report report-compact"/);
+  assert.match(html, /\.report-compact \{ min-height: 0; \}/);
+});

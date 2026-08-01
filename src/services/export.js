@@ -163,6 +163,15 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
   const academicYear = data.academicYear || 'غير محددة';
   const planLabel = options.planLabel || scenario.label || 'خطة توزيع الأنصبة';
   const reportId = `QST-${new Date(preparedAt).toISOString().slice(0, 10).replaceAll('-', '')}`;
+  const teacherCount = activeTeachers(data).length;
+  const assignmentGroupCount = (scenario.summaries || []).reduce(
+    (sum, summary) => sum + groupTeacherAssignments(summary.assignments || []).length,
+    0,
+  );
+  const requirementCount = (data.requirements || []).length;
+  const reportDensity = teacherCount <= 7 && assignmentGroupCount <= 13 && requirementCount <= 6
+    ? 'spacious'
+    : (teacherCount <= 10 && assignmentGroupCount <= 24 && requirementCount <= 10 ? 'standard' : 'compact');
 
   return `<!doctype html>
 <html lang="ar" dir="rtl">
@@ -300,6 +309,91 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
     .signature { min-height: 25px; border-top: 1px solid #9fb1ae; padding-top: 3px; color: #667472; font-size: 7pt; }
     .signature strong { display: inline-block; color: #284743; margin-left: 8px; }
     .report-footer { margin-top: 4px; padding-top: 3px; border-top: 1px solid #dfe8e6; display: flex; justify-content: space-between; color: #7a8785; font-size: 6.2pt; }
+
+    /* v1.3.3: report density adapts to the actual plan instead of shrinking every report. */
+    .report {
+      min-height: 197mm;
+      display: flex;
+      flex-direction: column;
+    }
+    .signatures { margin-top: auto; }
+
+    .report-spacious .report-header { padding: 10px 14px 11px; border-radius: 15px; }
+    .report-spacious .header-row { gap: 18px; }
+    .report-spacious .brand { gap: 10px; }
+    .report-spacious .brand-mark { width: 39px; height: 39px; border-radius: 13px; font-size: 21px; }
+    .report-spacious .brand strong { font-size: 16px; }
+    .report-spacious .brand span { font-size: 8.2pt; }
+    .report-spacious .status-box span { font-size: 7.6pt; }
+    .report-spacious .status-pill { padding: 4px 11px; font-size: 8.2pt; }
+    .report-spacious .report-title { margin-top: 6px; font-size: 21px; line-height: 1.2; }
+    .report-spacious .report-subtitle { margin-top: 3px; font-size: 8.6pt; }
+    .report-spacious .meta-grid { gap: 7px; margin-top: 9px; }
+    .report-spacious .meta-item { padding: 6px 8px; border-radius: 9px; }
+    .report-spacious .meta-item span { font-size: 7.2pt; }
+    .report-spacious .meta-item strong { margin-top: 2px; font-size: 8.9pt; }
+    .report-spacious .metrics { gap: 0; margin: 8px 0; border-radius: 11px; }
+    .report-spacious .metric { padding: 7px 10px; }
+    .report-spacious .metric span { font-size: 7.5pt; }
+    .report-spacious .metric strong { margin-right: 7px; font-size: 14px; }
+    .report-spacious .section-title { margin: 8px 0 5px; }
+    .report-spacious .section-title h2 { font-size: 13pt; }
+    .report-spacious .section-title span { font-size: 7.5pt; }
+    .report-spacious .teacher-table { font-size: 8.25pt; border-radius: 11px; }
+    .report-spacious .teacher-table th { padding: 6px 6px; }
+    .report-spacious .teacher-table td { padding: 6px 6px; }
+    .report-spacious .teacher-name { width: 13%; }
+    .report-spacious .teacher-table th:nth-child(3) { width: 9%; }
+    .report-spacious .teacher-table th:nth-child(4) { width: 7%; }
+    .report-spacious .teacher-table th:nth-child(5) { width: 52.5%; }
+    .report-spacious .teacher-table th:nth-child(6) { width: 7%; }
+    .report-spacious .teacher-table th:nth-child(7) { width: 8%; }
+    .report-spacious .role-badge { padding: 2px 7px; font-size: 7.1pt; }
+    .report-spacious .assignment-line { gap: 7px; padding: 1.5px 0; }
+    .report-spacious .assignment-line strong { font-size: 8.05pt; }
+    .report-spacious .assignment-line span { font-size: 7.8pt; }
+    .report-spacious .assignment-line em { font-size: 7.6pt; }
+    .report-spacious .load-cell strong { font-size: 12.5px; }
+    .report-spacious .load-cell span { font-size: 7pt; }
+    .report-spacious .coverage-section { margin-top: 8px; }
+    .report-spacious .coverage-grid { gap: 6px; }
+    .report-spacious .coverage-card { padding: 6px 8px; border-radius: 9px; }
+    .report-spacious .coverage-card-title strong { font-size: 7.8pt; }
+    .report-spacious .coverage-card-title span { font-size: 7pt; }
+    .report-spacious .coverage-card-values { font-size: 7pt; }
+    .report-spacious .coverage-card-values b { font-size: 7.8pt; }
+    .report-spacious .signatures { gap: 20px; padding-top: 13px; }
+    .report-spacious .signature { min-height: 40px; padding-top: 6px; font-size: 8.1pt; }
+    .report-spacious .report-footer { margin-top: 8px; padding-top: 5px; font-size: 7pt; }
+
+    .report-standard .report-header { padding: 8px 12px 9px; }
+    .report-standard .brand-mark { width: 35px; height: 35px; font-size: 19px; }
+    .report-standard .brand strong { font-size: 15px; }
+    .report-standard .report-title { font-size: 18px; }
+    .report-standard .report-subtitle { font-size: 8.1pt; }
+    .report-standard .meta-grid { gap: 6px; margin-top: 7px; }
+    .report-standard .meta-item { padding: 5px 7px; }
+    .report-standard .meta-item span { font-size: 7pt; }
+    .report-standard .meta-item strong { font-size: 8.4pt; }
+    .report-standard .metrics { margin: 6px 0; }
+    .report-standard .metric { padding: 5px 8px; }
+    .report-standard .metric span { font-size: 7.2pt; }
+    .report-standard .metric strong { font-size: 12px; }
+    .report-standard .section-title { margin: 6px 0 4px; }
+    .report-standard .section-title h2 { font-size: 11.8pt; }
+    .report-standard .teacher-table { font-size: 7.65pt; }
+    .report-standard .teacher-table th { padding: 5px; }
+    .report-standard .teacher-table td { padding: 4.8px 5px; }
+    .report-standard .assignment-line { padding: 1px 0; }
+    .report-standard .assignment-line strong { font-size: 7.5pt; }
+    .report-standard .coverage-card { padding: 5px 7px; }
+    .report-standard .signatures { padding-top: 9px; }
+    .report-standard .signature { min-height: 34px; font-size: 7.6pt; }
+    .report-standard .report-footer { font-size: 6.7pt; }
+
+    .report-compact { min-height: 0; }
+    .report-compact .signatures { margin-top: 5px; }
+
     @media print {
       html, body { width: auto; min-height: 0; }
       body { margin: 0; }
@@ -312,7 +406,7 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
   </style>
 </head>
 <body>
-  <main class="report">
+  <main class="report report-${reportDensity}">
     <header class="report-header">
       <div class="header-row">
         <div class="brand">
