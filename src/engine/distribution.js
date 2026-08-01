@@ -870,26 +870,35 @@ export function generateScenario(
     fixed.assignments,
     frozenTeacherIds,
   );
-  const optimized = repairUnassigned(
-    kind,
-    activeTeachers,
-    tasks,
-    greedy.assignments,
-    greedy.unassigned,
-    normalizedSettings,
-    variant,
-    fixed.lockedTaskIds,
-    frozenTeacherIds,
-  );
-  const diversifiedAssignments = mutateAssignments(
-    activeTeachers,
-    tasks,
-    optimized.assignments,
-    normalizedSettings,
-    variant,
-    fixed.lockedTaskIds,
-    frozenTeacherIds,
-  );
+  const optimized = options.skipRepair
+    ? {
+      assignments: greedy.assignments,
+      unassigned: greedy.unassigned,
+      relocationCount: 0,
+      repairedCount: 0,
+    }
+    : repairUnassigned(
+      kind,
+      activeTeachers,
+      tasks,
+      greedy.assignments,
+      greedy.unassigned,
+      normalizedSettings,
+      variant,
+      fixed.lockedTaskIds,
+      frozenTeacherIds,
+    );
+  const diversifiedAssignments = options.skipMutation
+    ? optimized.assignments
+    : mutateAssignments(
+      activeTeachers,
+      tasks,
+      optimized.assignments,
+      normalizedSettings,
+      variant,
+      fixed.lockedTaskIds,
+      frozenTeacherIds,
+    );
   const metrics = scenarioMetrics(
     activeTeachers,
     diversifiedAssignments,
@@ -1024,6 +1033,8 @@ export function generateDistributionModels(
       variant: createVariant(seed, attempt),
       fixedAssignments: options.fixedAssignments || [],
       frozenTeacherIds: options.frozenTeacherIds || [],
+      skipRepair: Boolean(options.skipRepair),
+      skipMutation: Boolean(options.skipMutation),
     });
     if (!excluded.has(scenario.signature)) candidates.push(scenario);
   }
@@ -1045,6 +1056,168 @@ export function generateAllScenarios(teachers, requirements, settings = DEFAULT_
     limit: 20,
     attempts: 100,
   }).models;
+}
+
+function minimumTaskCountForShortage(tasks, shortagePeriods) {
+  let remaining = Math.max(0, Number(shortagePeriods) || 0);
+  if (!remaining) return 0;
+  const ordered = [...tasks].sort((a, b) => b.periods - a.periods);
+  let count = 0;
+  for (const task of ordered) {
+    remaining -= task.periods;
+    count += 1;
+    if (remaining <= 0) return count;
+  }
+  return count;
+}
+
+function eligibleTeacherIds(teachers, requirement) {
+  return teachers
+    .filter((teacher) => getAssignmentStatus(teacher, requirement) !== ASSIGNMENT_STATUS.FORBIDDEN)
+    .map((teacher) => teacher.id);
+}
+
+export function analyzeDistributionFeasibility(
+  teachers,
+  requirements,
+  settings = DEFAULT_SETTINGS,
+) {
+  const normalizedSettings = normalizeSettings(settings);
+  const activeTeachers = teachers.filter((teacher) => teacher.active);
+  const tasks = expandRequirements(requirements)
+    .filter((task) => task.periods > 0 && task.subject && task.grade);
+  const teacherById = new Map(activeTeachers.map((teacher) => [teacher.id, teacher]));
+  const capacityById = new Map(activeTeachers.map((teacher) => [
+    teacher.id,
+    teacherMaxLoad(teacher, normalizedSettings),
+  ]));
+
+  const requiredPeriods = tasks.reduce((sum, task) => sum + task.periods, 0);
+  const availablePeriods = [...capacityById.values()].reduce((sum, load) => sum + load, 0);
+  const issues = [];
+  const issueKeys = new Set();
+
+  const addIssue = (issue) => {
+    const key = issue.key || `${issue.type}:${issue.shortagePeriods}:${issue.teacherIds?.join(',') || ''}`;
+    if (issueKeys.has(key)) return;
+    issueKeys.add(key);
+    issues.push({ ...issue, key });
+  };
+
+  const totalShortage = Math.max(0, requiredPeriods - availablePeriods);
+  if (totalShortage > 0) {
+    addIssue({
+      type: 'total-capacity',
+      title: 'الطاقة التدريسية الإجمالية غير كافية',
+      requiredPeriods,
+      availablePeriods,
+      shortagePeriods: totalShortage,
+      uncoveredSections: minimumTaskCountForShortage(tasks, totalShortage),
+      message: `تحتاج الخطة إلى ${requiredPeriods} حصة، بينما الطاقة القصوى للمعلمين ${availablePeriods} حصة.`,
+    });
+  }
+
+  for (const requirement of requirements) {
+    const requirementTasks = tasks.filter((task) => task.requirementId === requirement.id);
+    const demand = requirementTasks.reduce((sum, task) => sum + task.periods, 0);
+    const teacherIds = eligibleTeacherIds(activeTeachers, requirement);
+    const capacity = teacherIds.reduce((sum, id) => sum + (capacityById.get(id) || 0), 0);
+    if (demand > capacity) {
+      const shortage = demand - capacity;
+      addIssue({
+        type: 'requirement-capacity',
+        title: `تغطية غير كافية: ${requirement.subject} · ${requirement.grade}`,
+        requirementId: requirement.id,
+        teacherIds,
+        requiredPeriods: demand,
+        availablePeriods: capacity,
+        shortagePeriods: shortage,
+        uncoveredSections: minimumTaskCountForShortage(requirementTasks, shortage),
+        message: teacherIds.length
+          ? `حصص هذا المقرر ${demand}، والطاقة القصوى للمعلمين المسموح لهم به ${capacity} حصة.`
+          : 'لا يوجد معلم مسموح له بتدريس هذا الصف والمقرر.',
+      });
+    }
+  }
+
+  // Necessary Hall-style checks catch combined restrictions that a row-by-row check misses.
+  // Enumeration stays deliberately bounded so the precheck remains instant on ordinary school data.
+  if (activeTeachers.length > 0 && activeTeachers.length <= 12) {
+    const teacherIndex = new Map(activeTeachers.map((teacher, index) => [teacher.id, index]));
+    const taskMasks = tasks.map((task) => {
+      const requirement = requirements.find((item) => item.id === task.requirementId) || task;
+      const ids = eligibleTeacherIds(activeTeachers, requirement);
+      const mask = ids.reduce((value, id) => value | (1 << teacherIndex.get(id)), 0);
+      return { task, mask };
+    });
+    const fullMask = (1 << activeTeachers.length) - 1;
+    const candidates = [];
+    for (let mask = 1; mask < fullMask; mask += 1) {
+      let capacity = 0;
+      const teacherIds = [];
+      for (let index = 0; index < activeTeachers.length; index += 1) {
+        if ((mask & (1 << index)) === 0) continue;
+        const teacher = activeTeachers[index];
+        teacherIds.push(teacher.id);
+        capacity += capacityById.get(teacher.id) || 0;
+      }
+      const constrained = taskMasks.filter(({ mask: taskMask }) => taskMask !== 0 && (taskMask & ~mask) === 0);
+      const demand = constrained.reduce((sum, item) => sum + item.task.periods, 0);
+      if (demand > capacity) {
+        candidates.push({
+          mask,
+          teacherIds,
+          constrainedTasks: constrained.map((item) => item.task),
+          demand,
+          capacity,
+          shortage: demand - capacity,
+        });
+      }
+    }
+    candidates
+      .sort((a, b) => b.shortage - a.shortage || a.teacherIds.length - b.teacherIds.length)
+      .slice(0, 4)
+      .forEach((candidate) => {
+        const teacherNames = candidate.teacherIds
+          .map((id) => teacherById.get(id)?.name)
+          .filter(Boolean);
+        addIssue({
+          type: 'combined-scope-capacity',
+          title: 'قيود الإسناد تمنع تغطية جزء من الخطة',
+          teacherIds: candidate.teacherIds,
+          requiredPeriods: candidate.demand,
+          availablePeriods: candidate.capacity,
+          shortagePeriods: candidate.shortage,
+          uncoveredSections: minimumTaskCountForShortage(
+            candidate.constrainedTasks,
+            candidate.shortage,
+          ),
+          message: `التكليفات المحصورة في ${teacherNames.join('، ') || 'هذا النطاق'} تحتاج ${candidate.demand} حصة، بينما طاقتهم ${candidate.capacity} حصة.`,
+        });
+      });
+  }
+
+  const shortagePeriods = issues.reduce(
+    (maximum, issue) => Math.max(maximum, issue.shortagePeriods || 0),
+    0,
+  );
+  const uncoveredSections = issues.reduce(
+    (maximum, issue) => Math.max(maximum, issue.uncoveredSections || 0),
+    0,
+  );
+  const regularTeacherCapacity = Math.max(1, normalizedSettings.teacherMaxLoad);
+
+  return {
+    feasible: issues.length === 0,
+    requiredPeriods,
+    availablePeriods,
+    shortagePeriods,
+    uncoveredSections,
+    minimumAdditionalTeachers: shortagePeriods > 0
+      ? Math.ceil(shortagePeriods / regularTeacherCapacity)
+      : 0,
+    issues,
+  };
 }
 
 function requirementExists(requirements, id) {

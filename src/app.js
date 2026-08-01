@@ -10,6 +10,7 @@ import {
   requirementLabel,
 } from './domain/assignmentPolicy.js';
 import {
+  analyzeDistributionFeasibility,
   evaluateScenario,
   generateDistributionModels,
   rankDistributionModels,
@@ -83,6 +84,8 @@ let state = {
   generating: false,
   generationRound: 0,
   searchStats: { attempts: 0, uniqueFound: 0, completeFound: 0 },
+  feasibility: null,
+  partialPreview: false,
   resultView: storedWorkspace?.draft ? 'draft' : 'models',
   draft: storedWorkspace?.draft ?? null,
 };
@@ -356,6 +359,8 @@ function invalidateResults() {
   state.errors = [];
   state.generationRound = 0;
   state.searchStats = { attempts: 0, uniqueFound: 0, completeFound: 0 };
+  state.feasibility = null;
+  state.partialPreview = false;
   state.resultView = 'models';
   state.draft = null;
   clearWorkspace();
@@ -1117,6 +1122,58 @@ function draftPanel() {
     </section>`;
 }
 
+function feasibilityPanel() {
+  const check = state.feasibility;
+  if (!check || check.feasible) return '';
+  const primaryIssue = check.issues[0];
+  const suggestions = [
+    check.minimumAdditionalTeachers
+      ? `إضافة ${check.minimumAdditionalTeachers === 1 ? 'معلم واحد على الأقل' : `${check.minimumAdditionalTeachers} معلمين على الأقل`} بسقف مناسب.`
+      : '',
+    'رفع سقف بعض المعلمين بما يغطي مقدار العجز.',
+    'تقليل عدد الشعب أو حصص الشعبة إذا كانت البيانات المدخلة غير صحيحة.',
+    check.issues.some((issue) => issue.type !== 'total-capacity')
+      ? 'توسيع نطاق الإسناد للمعلمين الذين يمكنهم تدريس الصف أو المادة المتأثرة.'
+      : '',
+  ].filter(Boolean);
+
+  return `
+    <div class="panel feasibility-panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">فحص الجاهزية</p>
+          <h2>لا يمكن إنشاء توزيع مكتمل بالبيانات الحالية</h2>
+          <p class="muted">أوقف قِسطاس البحث قبل تشغيل المحرك لأن الخطة تحتوي عجزًا واضحًا.</p>
+        </div>
+        <span class="feasibility-status">تحتاج تعديلًا</span>
+      </div>
+      <div class="kpi-grid four feasibility-kpis">
+        <article class="kpi"><span>الحصص المطلوبة</span><strong>${check.requiredPeriods}</strong></article>
+        <article class="kpi"><span>الطاقة المتاحة</span><strong>${check.availablePeriods}</strong></article>
+        <article class="kpi danger-kpi"><span>العجز</span><strong>${check.shortagePeriods}</strong></article>
+        <article class="kpi danger-kpi"><span>شعب غير قابلة للتغطية</span><strong>${check.uncoveredSections}</strong></article>
+      </div>
+      <div class="alert error">
+        <strong>${esc(primaryIssue?.title || 'الخطة غير قابلة للتغطية')}</strong>
+        <p>${esc(primaryIssue?.message || '')}</p>
+      </div>
+      ${check.issues.length > 1 ? `
+        <div class="feasibility-issues">
+          <strong>قيود إضافية تحتاج مراجعة:</strong>
+          <ul>${check.issues.slice(1, 5).map((issue) => `<li>${esc(issue.message)}</li>`).join('')}</ul>
+        </div>` : ''}
+      <div class="feasibility-suggestions">
+        <strong>الحلول الأقرب:</strong>
+        <ul>${suggestions.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>
+      </div>
+      <div class="actions no-print">
+        ${state.partialPreview ? '' : '<button class="button secondary" data-action="generate-partial">عرض توزيع جزئي للتشخيص</button>'}
+        <button class="button ghost" data-action="step" data-id="0">تعديل الإعدادات</button>
+      </div>
+      <p class="muted feasibility-note">التوزيع الجزئي لا يمكن اعتماده أو تصديره كتقرير نهائي.</p>
+    </div>`;
+}
+
 function modelResultsPanel() {
   const scenario = selected();
   const assignedPeriods = scenario?.assignments.reduce((sum, item) => sum + item.periods, 0) || 0;
@@ -1134,13 +1191,13 @@ function modelResultsPanel() {
           <p class="muted">${esc(scenario.description)}</p>
         </div>
         <div class="actions no-print">
-          <button class="button primary" data-action="adopt-model">اعتماد مبدئي وتعديل</button>
-          <button class="button secondary" data-action="export"><span aria-hidden="true">⇩</span> تصدير Excel</button>
-          <button class="button secondary" data-action="print"><span aria-hidden="true">▤</span> تقرير PDF</button>
+          ${state.partialPreview
+    ? '<button class="button secondary" data-action="generate">إعادة فحص الخطة</button>'
+    : '<button class="button primary" data-action="adopt-model">اعتماد مبدئي وتعديل</button><button class="button secondary" data-action="export"><span aria-hidden="true">⇩</span> تصدير Excel</button><button class="button secondary" data-action="print"><span aria-hidden="true">▤</span> تقرير PDF</button>'}
         </div>
       </div>
 
-      ${modelNavigator(scenario)}
+      ${state.partialPreview ? '' : modelNavigator(scenario)}
 
       <div class="kpi-grid four">
         <article class="kpi"><span>الحصص المسندة</span><strong>${assignedPeriods}</strong></article>
@@ -1149,7 +1206,9 @@ function modelResultsPanel() {
         <article class="kpi"><span>الفرق</span><strong>${scenario.loadSpread}</strong></article>
       </div>
 
-      ${scenario.warnings.length ? `<div class="alert warning"><ul>${scenario.warnings.map((warning) => `<li>${esc(warning)}</li>`).join('')}</ul></div>` : '<div class="alert success">اكتمل توزيع جميع الشعب داخل الخيارات التي حددتها.</div>'}
+      ${state.partialPreview
+    ? '<div class="alert error"><strong>توزيع جزئي للتشخيص فقط.</strong> لا يمكن اعتماد هذه النتيجة أو تصديرها حتى تعالج العجز.</div>'
+    : scenario.warnings.length ? `<div class="alert warning"><ul>${scenario.warnings.map((warning) => `<li>${esc(warning)}</li>`).join('')}</ul></div>` : '<div class="alert success">اكتمل توزيع جميع الشعب داخل الخيارات التي حددتها.</div>'}
       ${scenario.repairedCount ? `<div class="alert success smart-repair-note">أعاد قِسطاس موازنة ${scenario.relocationCount} تكليفات لتغطية ${scenario.repairedCount} شعبة كان يمكن أن تبقى غير مسندة في التوزيع التسلسلي.</div>` : ''}
       ${unassigned}
 
@@ -1175,7 +1234,7 @@ function modelResultsPanel() {
   }).join('')}
       </div>
 
-      ${modelComparison()}
+      ${state.partialPreview ? '' : modelComparison()}
     </div>` : '';
 
   const modelCount = state.scenarios.length;
@@ -1186,7 +1245,7 @@ function modelResultsPanel() {
       : modelCount >= 3 && modelCount <= 10
         ? `${modelCount} نماذج مختلفة${state.searchStats?.completeFound ? ' ومكتملة' : ''}`
         : `${modelCount} نموذجًا مختلفًا${state.searchStats?.completeFound ? ' ومكتملًا' : ''}`;
-  const searchMessage = modelCount
+  const searchMessage = modelCount && !state.partialPreview
     ? `<div class="models-found"><strong>عثر قِسطاس على ${modelCountText}.</strong><span>تُحفظ البدائل التي طلبتها، ويمنع قِسطاس تكرار النموذج نفسه.</span></div>`
     : '';
 
@@ -1208,6 +1267,7 @@ function modelResultsPanel() {
       </div>
 
       ${state.errors.length ? `<div class="alert error"><strong>راجع هذه النقاط:</strong><ul>${state.errors.map((error) => `<li>${esc(error)}</li>`).join('')}</ul></div>` : ''}
+      ${feasibilityPanel()}
       ${searchMessage}
       ${result}
 
@@ -1222,6 +1282,12 @@ function resultsPanel() {
 
 
 function adoptSelectedModel() {
+  if (state.partialPreview) {
+    state.notice = 'التوزيع الجزئي للتشخيص فقط ولا يمكن اعتماده.';
+    state.noticeType = 'warning';
+    render();
+    return;
+  }
   const scenario = selected();
   if (!scenario) return;
   state.draft = {
@@ -1414,7 +1480,7 @@ function render() {
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.3.0 · تخطيط مرن للأنصبة</span>
+            <span class="status-pill">الإصدار 1.3.1 · فحص الجاهزية قبل التوزيع</span>
             <h1>خطّط الأنصبة بوضوح،<br><em>واعتمد التوزيع بثقة.</em></h1>
             <p>حدّد المادة أو القسم، أدخل بيانات الشعب والمعلمين، ثم راجع توزيعًا متوازنًا واطلب بديلًا عند الحاجة.</p>
             <div class="hero-features"><span>✓ تهيئة حسب المادة</span><span>✓ الصفوف من 1 إلى 12</span><span>✓ بدائل محفوظة عند الطلب</span></div>
@@ -1604,6 +1670,8 @@ app.addEventListener('click', async (event) => {
       generating: false,
       generationRound: 0,
       searchStats: { attempts: 0, uniqueFound: 0, completeFound: 0 },
+      feasibility: null,
+      partialPreview: false,
       resultView: 'models',
       draft: null,
     };
@@ -1714,6 +1782,7 @@ app.addEventListener('click', async (event) => {
   }
 
   if (action === 'generate') await generate(false);
+  if (action === 'generate-partial') await generate(false, true);
 
   if (action === 'select-scenario') {
     state.selectedId = button.dataset.id;
@@ -1728,7 +1797,7 @@ app.addEventListener('click', async (event) => {
     render();
   }
 
-  if (action === 'generate-more') await generate(true);
+  if (action === 'generate-more' && !state.partialPreview) await generate(true);
 
   if (action === 'adopt-model') adoptSelectedModel();
 
@@ -1797,6 +1866,12 @@ app.addEventListener('click', async (event) => {
   }
 
   if (action === 'export' && selected()) {
+    if (state.partialPreview) {
+      state.notice = 'لا يمكن تصدير توزيع جزئي. عالج العجز أولًا.';
+      state.noticeType = 'warning';
+      render();
+      return;
+    }
     try {
       await exportScenarioExcel(selected(), state.data, {
         planLabel: selected().label,
@@ -1807,6 +1882,12 @@ app.addEventListener('click', async (event) => {
     }
   }
   if (action === 'print') {
+    if (state.partialPreview) {
+      state.notice = 'لا يمكن إنشاء تقرير رسمي لتوزيع جزئي.';
+      state.noticeType = 'warning';
+      render();
+      return;
+    }
     const isDraft = state.resultView === 'draft' && state.draft?.scenario;
     const scenario = isDraft ? state.draft.scenario : selected();
     if (scenario) {
@@ -1821,7 +1902,7 @@ app.addEventListener('click', async (event) => {
 
 });
 
-async function generate(more = false) {
+async function generate(more = false, allowPartial = false) {
   state.errors = validateInputs(
     state.data.teachers,
     state.data.requirements,
@@ -1844,6 +1925,26 @@ async function generate(more = false) {
   }
 
   if (state.errors.length) {
+    state.feasibility = null;
+    state.partialPreview = false;
+    render();
+    return;
+  }
+
+  const feasibility = analyzeDistributionFeasibility(
+    state.data.teachers,
+    state.data.requirements,
+    state.data.settings,
+  );
+  state.feasibility = feasibility;
+
+  if (!feasibility.feasible && !allowPartial) {
+    state.scenarios = [];
+    state.selectedId = '';
+    state.searchStats = { attempts: 0, uniqueFound: 0, completeFound: 0 };
+    state.partialPreview = false;
+    state.notice = '';
+    state.noticeType = 'warning';
     render();
     return;
   }
@@ -1861,11 +1962,21 @@ async function generate(more = false) {
         state.data.settings,
         {
           limit: 1,
-          attempts: INITIAL_SEARCH_ATTEMPTS,
+          attempts: allowPartial ? 1 : INITIAL_SEARCH_ATTEMPTS,
           seedOffset: 0,
+          skipRepair: allowPartial,
+          skipMutation: allowPartial,
         },
       );
-      state.scenarios = result.models;
+      state.partialPreview = allowPartial && !feasibility.feasible;
+      state.scenarios = state.partialPreview
+        ? result.models.map((model) => ({
+          ...model,
+          label: 'توزيع جزئي للتشخيص',
+          tag: 'غير صالح للاعتماد',
+          description: 'يعرض أقصى تغطية أولية ممكنة دون بحث مطوّل، لتحديد موضع العجز فقط.',
+        }))
+        : result.models;
       state.generationRound = 0;
       state.searchStats = {
         attempts: result.attempts,
@@ -1875,11 +1986,16 @@ async function generate(more = false) {
         ).length,
       };
       state.selectedId = state.scenarios[0]?.id || '';
-      state.notice = state.scenarios.length
-        ? ''
-        : 'لم يتمكن قِسطاس من إنشاء توزيع ضمن القيود الحالية.';
+      state.notice = state.partialPreview
+        ? 'تم إنشاء معاينة جزئية سريعة. هذه النتيجة للتشخيص فقط.'
+        : state.scenarios.length
+          ? ''
+          : 'لم يتمكن قِسطاس من إنشاء توزيع ضمن القيود الحالية.';
+      state.noticeType = state.partialPreview ? 'warning' : 'success';
       return;
     }
+
+    if (state.partialPreview || !feasibility.feasible) return;
 
     const excluded = state.scenarios.map((scenario) => scenario.signature);
     let foundModel = null;

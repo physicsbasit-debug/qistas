@@ -8,6 +8,9 @@ test('the browser app has no active Gemini or Supabase integration', async () =>
   assert.doesNotMatch(source, /supabase-url/);
   assert.doesNotMatch(source, /supabase-anon-key/);
   assert.doesNotMatch(source, /data-action="gemini"/);
+  assert.match(source, /analyzeDistributionFeasibility/);
+  assert.match(source, /عرض توزيع جزئي للتشخيص/);
+  assert.match(source, /لا يمكن إنشاء توزيع مكتمل بالبيانات الحالية/);
 });
 
 
@@ -17,7 +20,7 @@ test('the build script excludes the dormant Gemini service from GitHub Pages', a
   assert.match(source, /await rm/);
 });
 
-test('package version is 1.3.0', async () => {
+test('package version is 1.3.1', async () => {
   const source = await readFile(new URL('../package.json', import.meta.url), 'utf8');
-  assert.equal(JSON.parse(source).version, '1.3.0');
+  assert.equal(JSON.parse(source).version, '1.3.1');
 });
