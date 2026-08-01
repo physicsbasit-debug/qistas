@@ -378,7 +378,10 @@ function markDraftChanged(notice = '') {
   if (!state.draft) return;
   state.draft.approved = false;
   state.draft.approvedAt = '';
-  if (state.draft.scenario) state.draft.scenario.tag = 'مسودة';
+  if (state.draft.scenario) {
+    state.draft.scenario.label = 'الخطة قيد التعديل';
+    state.draft.scenario.tag = 'مسودة';
+  }
   state.draft.notice = notice;
   state.draft.noticeType = 'success';
   persistDraft();
@@ -910,6 +913,10 @@ function ensureDraftShape() {
   state.draft.noticeType = String(state.draft.noticeType || 'success');
   state.draft.approved = Boolean(state.draft.approved);
   state.draft.approvedAt = String(state.draft.approvedAt || '');
+  if (state.draft.scenario?.id === 'draft-plan') {
+    state.draft.scenario.label = state.draft.approved ? 'الخطة المعتمدة' : 'الخطة قيد التعديل';
+    state.draft.scenario.tag = state.draft.approved ? 'معتمدة' : 'مسودة';
+  }
   return state.draft;
 }
 
@@ -1044,7 +1051,7 @@ function draftPanel() {
       <div class="panel draft-hero">
         <div>
           <p class="eyebrow">مساحة العمل</p>
-          <h2>الخطة قيد التعديل ${draft.approved ? '<span class="approval-badge">معتمدة</span>' : ''}</h2>
+          <h2>${draft.approved ? 'الخطة المعتمدة' : 'الخطة قيد التعديل'} ${draft.approved ? '<span class="approval-badge">معتمدة</span>' : ''}</h2>
           <p class="muted">ثبّت المعلمين الذين أعجبك توزيعهم، وانقل أي شعبة بنقرة، ثم دع قِسطاس يعيد توزيع الباقي فقط.</p>
           ${approvedDate ? `<small class="approved-date">آخر اعتماد: ${esc(approvedDate)}</small>` : ''}
         </div>
@@ -1337,6 +1344,7 @@ function approveDraft() {
   draft.approvedAt = new Date().toISOString();
   draft.notice = 'تم اعتماد الخطة وحفظها على هذا الجهاز.';
   draft.noticeType = 'success';
+  draft.scenario.label = 'الخطة المعتمدة';
   draft.scenario.tag = 'معتمدة';
   persistDraft();
   render();
@@ -1480,7 +1488,7 @@ function render() {
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.3.4 · أسماء أوضح وتوازن أفضل لأعمدة التقرير</span>
+            <span class="status-pill">الإصدار 1.3.4 Fix 1 · حالة موحّدة في التقرير والتصدير</span>
             <h1>خطّط الأنصبة بوضوح،<br><em>واعتمد التوزيع بثقة.</em></h1>
             <p>حدّد المادة أو القسم، أدخل بيانات الشعب والمعلمين، ثم راجع توزيعًا متوازنًا واطلب بديلًا عند الحاجة.</p>
             <div class="hero-features"><span>✓ تهيئة حسب المادة</span><span>✓ الصفوف من 1 إلى 12</span><span>✓ بدائل محفوظة عند الطلب</span></div>
@@ -1856,7 +1864,7 @@ app.addEventListener('click', async (event) => {
         approved: Boolean(state.draft.approved),
         approvedAt: state.draft.approvedAt,
         isDraft: !state.draft.approved,
-        planLabel: state.draft.scenario.label,
+        planLabel: state.draft.approved ? 'الخطة المعتمدة' : 'الخطة قيد التعديل',
       });
     } catch (error) {
       state.draft.notice = error?.message || 'تعذر إنشاء ملف Excel.';
@@ -1896,7 +1904,9 @@ app.addEventListener('click', async (event) => {
           approved: Boolean(isDraft && state.draft.approved),
           approvedAt: isDraft ? state.draft.approvedAt : '',
           isDraft: Boolean(isDraft && !state.draft.approved),
-          planLabel: scenario.label,
+          planLabel: isDraft
+            ? (state.draft.approved ? 'الخطة المعتمدة' : 'الخطة قيد التعديل')
+            : scenario.label,
         });
       } catch (error) {
         const message = error?.message || 'تعذر إنشاء ملف PDF.';

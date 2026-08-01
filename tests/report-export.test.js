@@ -60,6 +60,7 @@ test('official report is standalone, RTL, landscape, and free of editing control
   const html = buildScenarioReportHtml(scenario, data, {
     approved: true,
     approvedAt: '2026-07-31T10:00:00.000Z',
+    planLabel: 'الخطة المعتمدة',
   });
 
   assert.match(html, /خطة توزيع الأنصبة التدريسية/);
@@ -76,6 +77,8 @@ test('official report is standalone, RTL, landscape, and free of editing control
   assert.match(html, /4\/4<\/b> شعبة/);
   assert.doesNotMatch(html, /class="coverage-table"/);
   assert.match(html, /إعداد المعلم الأول/);
+  assert.match(html, /الخطة المعتمدة/);
+  assert.doesNotMatch(html, /الخطة قيد التعديل/);
   assert.doesNotMatch(html, />نقل</);
   assert.doesNotMatch(html, /data-action=/);
   assert.doesNotMatch(html, /button/);

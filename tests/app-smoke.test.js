@@ -47,7 +47,7 @@ test('app keeps the existing distribution workflow after merging setup sections'
   assert.match(appRoot.innerHTML, /عدد المعلمين/);
   assert.match(appRoot.innerHTML, /الشعب والحصص/);
   assert.match(appRoot.innerHTML, /الخطوة 1 من 3/);
-  assert.match(appRoot.innerHTML, /الإصدار 1\.3\.4/);
+  assert.match(appRoot.innerHTML, /الإصدار 1\.3\.4 Fix 1/);
   assert.match(appRoot.innerHTML, /خطّط الأنصبة بوضوح/);
   assert.match(appRoot.innerHTML, /واعتمد التوزيع بثقة/);
   assert.match(appRoot.innerHTML, /إجمالي الحصص الأسبوعية/);
@@ -90,6 +90,10 @@ test('app keeps the existing distribution workflow after merging setup sections'
 
   await click(clickEvent({ action: 'rebalance-draft' }));
   assert.match(appRoot.innerHTML, /حافظ قِسطاس على/);
+
+  await click(clickEvent({ action: 'approve-draft' }));
+  assert.match(appRoot.innerHTML, /الخطة المعتمدة/);
+  assert.match(appRoot.innerHTML, /تم اعتماد الخطة/);
 });
 
 test('choosing one subject prepares a clean isolated plan and teacher list', async () => {

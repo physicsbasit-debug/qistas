@@ -40,7 +40,10 @@ const scenario = {
 };
 
 test('Excel package contains three readable RTL worksheets', () => {
-  const files = buildScenarioExcelFiles(scenario, data, { approved: true });
+  const files = buildScenarioExcelFiles(scenario, data, {
+    approved: true,
+    planLabel: 'الخطة المعتمدة',
+  });
   assert.equal(Object.keys(files).length, 10);
   assert.match(files['xl/workbook.xml'], /توزيع الأنصبة/);
   assert.match(files['xl/workbook.xml'], /تفصيل التكليفات/);
@@ -51,6 +54,8 @@ test('Excel package contains three readable RTL worksheets', () => {
   assert.match(files['xl/worksheets/sheet1.xml'], /width="58"/);
   assert.match(files['xl/worksheets/sheet1.xml'], /الأحياء - التاسع: الشعب 1-3 \(6 حصة\)/);
   assert.match(files['xl/worksheets/sheet1.xml'], /orientation="landscape"/);
+  assert.match(files['xl/worksheets/sheet1.xml'], /النموذج: الخطة المعتمدة/);
+  assert.doesNotMatch(files['xl/worksheets/sheet1.xml'], /الخطة قيد التعديل/);
   assert.match(files['xl/worksheets/sheet2.xml'], /autoFilter ref="A4:I9"/);
   assert.match(files['xl/worksheets/sheet3.xml'], /مكتمل/);
 });
