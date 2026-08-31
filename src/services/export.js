@@ -33,6 +33,35 @@ export function formatSectionList(values) {
   return sections.length ? sections.map(String).join('، ') : '—';
 }
 
+// Backward-compatible helper kept for Excel/export consumers that still
+// compress consecutive section numbers. The official PDF report intentionally
+// uses formatSectionList so manual section swaps remain explicit and auditable.
+export function formatSectionRanges(values) {
+  const sections = numericSections(values);
+  if (!sections.length) return '—';
+
+  const ranges = [];
+  let start = sections[0];
+  let previous = sections[0];
+
+  const pushRange = () => {
+    ranges.push(start === previous ? String(start) : `${start}-${previous}`);
+  };
+
+  for (let index = 1; index < sections.length; index += 1) {
+    const current = sections[index];
+    if (current === previous + 1) {
+      previous = current;
+      continue;
+    }
+    pushRange();
+    start = current;
+    previous = current;
+  }
+  pushRange();
+  return ranges.join('، ');
+}
+
 export function groupTeacherAssignments(assignments = []) {
   const groups = new Map();
 
