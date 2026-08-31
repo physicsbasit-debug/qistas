@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { evaluateScenario } from '../src/engine/distribution.js';
+import { POLICY_MODES } from '../src/domain/assignmentPolicy.js';
 
 function createBrowserHarness(initialStorage = {}) {
   const listeners = new Map();
@@ -47,7 +49,7 @@ test('app keeps the existing distribution workflow after merging setup sections'
   assert.match(appRoot.innerHTML, /عدد المعلمين/);
   assert.match(appRoot.innerHTML, /الشعب والحصص/);
   assert.match(appRoot.innerHTML, /الخطوة 1 من 3/);
-  assert.match(appRoot.innerHTML, /الإصدار 1\.3\.4 Fix 1/);
+  assert.match(appRoot.innerHTML, /الإصدار 1\.3\.5/);
   assert.match(appRoot.innerHTML, /خطّط الأنصبة بوضوح/);
   assert.match(appRoot.innerHTML, /واعتمد التوزيع بثقة/);
   assert.match(appRoot.innerHTML, /إجمالي الحصص الأسبوعية/);
@@ -94,6 +96,87 @@ test('app keeps the existing distribution workflow after merging setup sections'
   await click(clickEvent({ action: 'approve-draft' }));
   assert.match(appRoot.innerHTML, /الخطة المعتمدة/);
   assert.match(appRoot.innerHTML, /تم اعتماد الخطة/);
+});
+
+test('grade-eight general science can be moved between physics, chemistry, and biology teachers', async () => {
+  const specialtyOnly = {
+    mode: POLICY_MODES.SPECIALTY_ONLY,
+    grade: '',
+    requirementId: '',
+    extraRequirementId: '',
+    selectedRequirementIds: [],
+  };
+  const teachers = [
+    { id: 'physics', name: 'معلم الفيزياء', specialty: 'الفيزياء', isLead: false, active: true, assignmentPolicy: specialtyOnly },
+    { id: 'chemistry', name: 'معلم الكيمياء', specialty: 'الكيمياء', isLead: false, active: true, assignmentPolicy: specialtyOnly },
+    { id: 'biology', name: 'معلم الأحياء', specialty: 'الأحياء', isLead: false, active: true, assignmentPolicy: specialtyOnly },
+  ];
+  const requirements = [
+    { id: 'g8-science', grade: 'الثامن', subject: 'العلوم العامة', sections: 1, periodsPerSection: 6 },
+  ];
+  const settings = { teacherMaxLoad: 18, leadMaxLoad: 14, schoolShift: 'single' };
+  const scenario = evaluateScenario(
+    teachers,
+    requirements,
+    settings,
+    [{ taskId: 'g8-science-s1', teacherId: 'physics' }],
+    [],
+    { id: 'draft-plan', label: 'الخطة قيد التعديل', tag: 'مسودة' },
+  );
+  const data = {
+    planId: 'science-manual-transfer',
+    planName: 'توزيع أنصبة قسم العلوم',
+    schoolName: 'مدرسة اختبار',
+    departmentName: 'قسم العلوم',
+    academicYear: '2026/2027',
+    gradeRange: { start: 8, end: 10 },
+    planScope: {
+      mode: 'department',
+      templateId: 'science',
+      subjectId: '',
+      selectedSubjectIds: ['general-science', 'physics', 'chemistry', 'biology'],
+      teacherCount: 3,
+      hasLead: false,
+    },
+    settings,
+    teachers,
+    requirements,
+  };
+  const draft = {
+    sourceScenarioId: 'manual-test',
+    scenario,
+    lockedTeacherIds: [],
+    pinnedTaskIds: [],
+    selectedTaskId: '',
+    approved: false,
+    approvedAt: '',
+    notice: '',
+    noticeType: 'success',
+    rebalanceRound: 0,
+  };
+  const { listeners, appRoot, storage } = createBrowserHarness({
+    'qistas:v1': JSON.stringify(data),
+    'qistas:workspace:v1': JSON.stringify({ draft }),
+  });
+
+  await import(`../src/app.js?grade8-transfer=${Date.now()}`);
+  const click = listeners.get('click');
+
+  await click(clickEvent({ action: 'select-transfer', taskId: 'g8-science-s1' }));
+  assert.match(appRoot.innerHTML, /data-action="move-task"[^>]+data-teacher-id="chemistry"/);
+  assert.match(appRoot.innerHTML, /data-action="move-task"[^>]+data-teacher-id="biology"/);
+
+  await click(clickEvent({ action: 'move-task', taskId: 'g8-science-s1', teacherId: 'chemistry' }));
+  let savedDraft = JSON.parse(storage.get('qistas:workspace:v1')).draft;
+  assert.equal(savedDraft.scenario.assignments[0].teacherId, 'chemistry');
+  assert.equal(savedDraft.scenario.assignments[0].manualOverride, true);
+  assert.deepEqual(savedDraft.pinnedTaskIds, ['g8-science-s1']);
+
+  await click(clickEvent({ action: 'rebalance-draft' }));
+  savedDraft = JSON.parse(storage.get('qistas:workspace:v1')).draft;
+  assert.equal(savedDraft.scenario.assignments[0].teacherId, 'chemistry');
+  assert.equal(savedDraft.scenario.assignments[0].manualOverride, true);
+  assert.match(appRoot.innerHTML, /حافظ قِسطاس على 1 تكليفات مثبتة/);
 });
 
 test('choosing one subject prepares a clean isolated plan and teacher list', async () => {

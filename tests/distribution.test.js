@@ -13,6 +13,7 @@ import {
 import {
   ASSIGNMENT_STATUS,
   getAssignmentStatus,
+  getManualTransferStatus,
   POLICY_MODES,
 } from '../src/domain/assignmentPolicy.js';
 import { compareGrades } from '../src/domain/grades.js';
@@ -221,6 +222,69 @@ test('custom mode is a simple selected-or-forbidden list', () => {
     getAssignmentStatus(teacher, { id: 'g10-bio', grade: 'العاشر', subject: 'الأحياء' }),
     ASSIGNMENT_STATUS.FORBIDDEN,
   );
+});
+
+test('manual transfer allows grade-eight general science across science specialties only', () => {
+  const generalScience = { id: 'g8-science', grade: 'الثامن', subject: 'العلوم العامة' };
+  for (const specialty of ['الفيزياء', 'الكيمياء', 'الأحياء']) {
+    const teacher = sampleTeacher({ specialty });
+    assert.equal(getAssignmentStatus(teacher, generalScience), ASSIGNMENT_STATUS.FORBIDDEN);
+    assert.equal(getManualTransferStatus(teacher, generalScience), ASSIGNMENT_STATUS.ALLOWED);
+  }
+
+  const arabicTeacher = sampleTeacher({ specialty: 'اللغة العربية' });
+  assert.equal(
+    getManualTransferStatus(arabicTeacher, generalScience),
+    ASSIGNMENT_STATUS.FORBIDDEN,
+  );
+  const chemistryTeacher = sampleTeacher({ specialty: 'الكيمياء' });
+  assert.equal(
+    getManualTransferStatus(
+      chemistryTeacher,
+      { id: 'g9-bio', grade: 'التاسع', subject: 'الأحياء' },
+    ),
+    ASSIGNMENT_STATUS.FORBIDDEN,
+  );
+});
+
+test('manual grade-eight science transfer stays fixed during rebalancing', async () => {
+  const { validateFixedAssignments } = await import('../src/engine/distribution.js');
+  const teacher = sampleTeacher({ id: 'chemistry', specialty: 'الكيمياء' });
+  const requirements = [
+    { id: 'g8-science', grade: 'الثامن', subject: 'العلوم العامة', sections: 1, periodsPerSection: 6 },
+  ];
+  const fixed = { taskId: 'g8-science-s1', teacherId: teacher.id, manualOverride: true };
+
+  assert.match(
+    validateFixedAssignments(
+      [teacher],
+      requirements,
+      { teacherMaxLoad: 18, leadMaxLoad: 14 },
+      [{ taskId: fixed.taskId, teacherId: fixed.teacherId }],
+    ).join(' '),
+    /خارج نطاقه/,
+  );
+  assert.deepEqual(
+    validateFixedAssignments(
+      [teacher],
+      requirements,
+      { teacherMaxLoad: 18, leadMaxLoad: 14 },
+      [fixed],
+    ),
+    [],
+  );
+
+  const result = generateDistributionModels(
+    [teacher],
+    requirements,
+    { teacherMaxLoad: 18, leadMaxLoad: 14 },
+    { limit: 2, attempts: 4, fixedAssignments: [fixed] },
+  );
+  assert.ok(result.models.length > 0);
+  assert.equal(result.models[0].unassigned.length, 0);
+  assert.equal(result.models[0].assignments[0].teacherId, teacher.id);
+  assert.equal(result.models[0].assignments[0].manualOverride, true);
+  assert.equal(result.models[0].assignments[0].preference, ASSIGNMENT_STATUS.ALLOWED);
 });
 
 test('generator never violates a forbidden grade scope', () => {

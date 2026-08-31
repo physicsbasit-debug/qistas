@@ -3,6 +3,7 @@ import {
   ASSIGNMENT_STATUS,
   buildInitialCustomSelection,
   getAssignmentStatus,
+  getManualTransferStatus,
   createDefaultAssignmentPolicy,
   describeAssignmentPolicy,
   normalizeAssignmentPolicy,
@@ -965,6 +966,7 @@ function draftFixedAssignments() {
     .map((assignment) => ({
       taskId: assignment.taskId,
       teacherId: assignment.teacherId,
+      manualOverride: assignment.manualOverride === true,
     }));
 }
 
@@ -980,19 +982,26 @@ function transferCandidates(assignment) {
       teacher.active
       && teacher.id !== assignment.teacherId
       && !lockedTeachers.has(teacher.id)
-      && getAssignmentStatus(teacher, assignment) !== ASSIGNMENT_STATUS.FORBIDDEN
     ))
     .map((teacher) => {
       const currentLoad = summaryByTeacher.get(teacher.id)?.load || 0;
       const maxLoad = teacherMaxLoad(teacher, state.data.settings);
+      const regularStatus = getAssignmentStatus(teacher, assignment);
+      const transferStatus = getManualTransferStatus(teacher, assignment);
       return {
         teacher,
         currentLoad,
         projectedLoad: currentLoad + assignment.periods,
         maxLoad,
+        transferStatus,
+        manualOverride: regularStatus === ASSIGNMENT_STATUS.FORBIDDEN
+          && transferStatus !== ASSIGNMENT_STATUS.FORBIDDEN,
       };
     })
-    .filter((candidate) => candidate.projectedLoad <= candidate.maxLoad)
+    .filter((candidate) => (
+      candidate.transferStatus !== ASSIGNMENT_STATUS.FORBIDDEN
+      && candidate.projectedLoad <= candidate.maxLoad
+    ))
     .sort((a, b) => a.projectedLoad - b.projectedLoad
       || a.teacher.name.localeCompare(b.teacher.name, 'ar'));
 }
@@ -1022,7 +1031,7 @@ function draftTransferPanel() {
           ${candidates.map((candidate) => `
             <button class="transfer-candidate" data-action="move-task" data-task-id="${assignment.taskId}" data-teacher-id="${candidate.teacher.id}">
               <strong>${esc(candidate.teacher.name)}</strong>
-              <span>${candidate.currentLoad} ← ${candidate.projectedLoad} من ${candidate.maxLoad}</span>
+              <span>${candidate.currentLoad} ← ${candidate.projectedLoad} من ${candidate.maxLoad}${candidate.manualOverride ? ' · متاح لعلوم الثامن' : ''}</span>
             </button>`).join('')}
         </div>` : '<div class="alert warning">لا يوجد معلم بديل مسموح له بهذه الشعبة ولديه سعة كافية.</div>'}
       <div class="transfer-footer">
@@ -1379,7 +1388,8 @@ function moveDraftTask(taskId, teacherId) {
       ? {
         ...item,
         teacherId: destination.id,
-        preference: getAssignmentStatus(destination, item),
+        preference: candidate.transferStatus,
+        manualOverride: candidate.manualOverride,
       }
       : item
   ));
@@ -1488,7 +1498,7 @@ function render() {
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.3.4 Fix 1 · حالة موحّدة في التقرير والتصدير</span>
+            <span class="status-pill">الإصدار 1.3.5 · نقل مرن لعلوم الصف الثامن</span>
             <h1>خطّط الأنصبة بوضوح،<br><em>واعتمد التوزيع بثقة.</em></h1>
             <p>حدّد المادة أو القسم، أدخل بيانات الشعب والمعلمين، ثم راجع توزيعًا متوازنًا واطلب بديلًا عند الحاجة.</p>
             <div class="hero-features"><span>✓ تهيئة حسب المادة</span><span>✓ الصفوف من 1 إلى 12</span><span>✓ بدائل محفوظة عند الطلب</span></div>

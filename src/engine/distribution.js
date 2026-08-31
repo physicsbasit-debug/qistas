@@ -1,6 +1,7 @@
 import {
   ASSIGNMENT_STATUS,
   getAssignmentStatus,
+  getManualTransferStatus,
   normalizeAssignmentPolicy,
   POLICY_MODES,
 } from '../domain/assignmentPolicy.js';
@@ -132,7 +133,12 @@ function scoreCandidate(kind, teacher, task, assignments, currentLoad, maxLoad, 
     + jitter;
 }
 
-function assignmentFromTask(task, teacher, preference = assignmentStatus(teacher, task)) {
+function assignmentFromTask(
+  task,
+  teacher,
+  preference = assignmentStatus(teacher, task),
+  { manualOverride = false } = {},
+) {
   return {
     taskId: task.id,
     requirementId: task.requirementId,
@@ -142,7 +148,26 @@ function assignmentFromTask(task, teacher, preference = assignmentStatus(teacher
     section: task.section,
     periods: task.periods,
     preference,
+    ...(manualOverride ? { manualOverride: true } : {}),
   };
+}
+
+function assignmentFromTaskWithManualOverride(task, teacher, requestedManualOverride = false) {
+  const regularStatus = assignmentStatus(teacher, task);
+  const manualStatus = requestedManualOverride
+    ? getManualTransferStatus(teacher, task)
+    : regularStatus;
+  const manualOverride = Boolean(
+    requestedManualOverride
+    && regularStatus === ASSIGNMENT_STATUS.FORBIDDEN
+    && manualStatus !== ASSIGNMENT_STATUS.FORBIDDEN
+  );
+  return assignmentFromTask(
+    task,
+    teacher,
+    manualOverride ? manualStatus : regularStatus,
+    { manualOverride },
+  );
 }
 
 function buildSummaries(teachers, assignments, settings) {
@@ -285,6 +310,9 @@ function createRepairState(
   const teacherById = new Map(activeTeachers.map((teacher) => [teacher.id, teacher]));
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const placements = new Map(assignments.map((assignment) => [assignment.taskId, assignment.teacherId]));
+  const manualOverrideTaskIds = new Set(
+    assignments.filter((assignment) => assignment.manualOverride).map((assignment) => assignment.taskId),
+  );
   const loads = new Map(activeTeachers.map((teacher) => [teacher.id, 0]));
 
   for (const [taskId, teacherId] of placements) {
@@ -297,6 +325,7 @@ function createRepairState(
     teacherById,
     taskById,
     placements,
+    manualOverrideTaskIds,
     loads,
     settings,
     variant,
@@ -333,7 +362,13 @@ function repairAssignmentsView(state) {
   for (const [taskId, teacherId] of state.placements) {
     const task = state.taskById.get(taskId);
     const teacher = state.teacherById.get(teacherId);
-    if (task && teacher) assignments.push(assignmentFromTask(task, teacher));
+    if (task && teacher) {
+      assignments.push(assignmentFromTaskWithManualOverride(
+        task,
+        teacher,
+        state.manualOverrideTaskIds.has(taskId),
+      ));
+    }
   }
   return assignments;
 }
@@ -585,6 +620,9 @@ function mutateAssignments(
   const teacherById = new Map(activeTeachers.map((teacher) => [teacher.id, teacher]));
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const placements = new Map(assignments.map((item) => [item.taskId, item.teacherId]));
+  const manualOverrideTaskIds = new Set(
+    assignments.filter((item) => item.manualOverride).map((item) => item.taskId),
+  );
   const loads = new Map(activeTeachers.map((teacher) => [teacher.id, 0]));
   for (const assignment of assignments) {
     loads.set(assignment.teacherId, (loads.get(assignment.teacherId) ?? 0) + assignment.periods);
@@ -658,7 +696,11 @@ function mutateAssignments(
   return [...placements].map(([taskId, teacherId]) => {
     const task = taskById.get(taskId);
     const teacher = teacherById.get(teacherId);
-    return assignmentFromTask(task, teacher);
+    return assignmentFromTaskWithManualOverride(
+      task,
+      teacher,
+      manualOverrideTaskIds.has(taskId),
+    );
   }).sort((a, b) => a.taskId.localeCompare(b.taskId));
 }
 
@@ -759,7 +801,11 @@ function prepareFixedAssignments(activeTeachers, tasks, settings, fixedAssignmen
       errors.push(`التكليف ${task.grade} / ${task.section} مثبت أكثر من مرة.`);
       continue;
     }
-    if (!isEligible(teacher, task)) {
+    const regularStatus = assignmentStatus(teacher, task);
+    const fixedStatus = fixed.manualOverride
+      ? getManualTransferStatus(teacher, task)
+      : regularStatus;
+    if (fixedStatus === ASSIGNMENT_STATUS.FORBIDDEN) {
       errors.push(`${teacher.name}: التكليف المثبت ${task.grade} / ${task.section} خارج نطاقه.`);
       continue;
     }
@@ -770,7 +816,13 @@ function prepareFixedAssignments(activeTeachers, tasks, settings, fixedAssignmen
     }
     seenTaskIds.add(task.id);
     loads.set(teacher.id, nextLoad);
-    assignments.push(assignmentFromTask(task, teacher));
+    assignments.push(assignmentFromTask(task, teacher, fixedStatus, {
+      manualOverride: Boolean(
+        fixed.manualOverride
+        && regularStatus === ASSIGNMENT_STATUS.FORBIDDEN
+        && fixedStatus !== ASSIGNMENT_STATUS.FORBIDDEN
+      ),
+    }));
   }
 
   return {
@@ -795,7 +847,22 @@ export function evaluateScenario(
   const normalizedAssignments = assignments.flatMap((assignment) => {
     const task = taskById.get(assignment.taskId) ?? assignment;
     const teacher = teacherById.get(assignment.teacherId);
-    return task && teacher ? [assignmentFromTask(task, teacher)] : [];
+    if (!task || !teacher) return [];
+    const regularStatus = assignmentStatus(teacher, task);
+    const manualStatus = assignment.manualOverride
+      ? getManualTransferStatus(teacher, task)
+      : regularStatus;
+    const manualOverride = Boolean(
+      assignment.manualOverride
+      && regularStatus === ASSIGNMENT_STATUS.FORBIDDEN
+      && manualStatus !== ASSIGNMENT_STATUS.FORBIDDEN
+    );
+    return [assignmentFromTask(
+      task,
+      teacher,
+      manualOverride ? manualStatus : regularStatus,
+      { manualOverride },
+    )];
   });
   const normalizedUnassigned = unassigned.map((item) => taskById.get(item.id) ?? item);
   const metrics = scenarioMetrics(

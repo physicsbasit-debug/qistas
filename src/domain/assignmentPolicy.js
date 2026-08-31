@@ -54,6 +54,18 @@ function isSameSpecialty(teacher, requirement) {
   return String(teacher.specialty || '').trim() === String(requirement.subject || '').trim();
 }
 
+const GRADE_EIGHT_SCIENCE_SPECIALTIES = new Set([
+  'العلوم العامة',
+  'الفيزياء',
+  'الكيمياء',
+  'الأحياء',
+]);
+
+export function isGradeEightGeneralScience(requirement) {
+  return String(requirement?.grade || '').trim() === 'الثامن'
+    && String(requirement?.subject || '').trim() === 'العلوم العامة';
+}
+
 export function getAssignmentStatus(teacher, requirement) {
   if (!teacher?.active) return ASSIGNMENT_STATUS.FORBIDDEN;
   const policy = normalizeAssignmentPolicy(teacher.assignmentPolicy);
@@ -92,6 +104,18 @@ export function getAssignmentStatus(teacher, requirement) {
         ? ASSIGNMENT_STATUS.PREFERRED
         : ASSIGNMENT_STATUS.FORBIDDEN;
   }
+}
+
+export function getManualTransferStatus(teacher, requirement) {
+  const regularStatus = getAssignmentStatus(teacher, requirement);
+  if (regularStatus !== ASSIGNMENT_STATUS.FORBIDDEN) return regularStatus;
+  if (!teacher?.active || !isGradeEightGeneralScience(requirement)) {
+    return ASSIGNMENT_STATUS.FORBIDDEN;
+  }
+
+  return GRADE_EIGHT_SCIENCE_SPECIALTIES.has(String(teacher.specialty || '').trim())
+    ? ASSIGNMENT_STATUS.ALLOWED
+    : ASSIGNMENT_STATUS.FORBIDDEN;
 }
 
 export function buildInitialCustomSelection(teacher, requirements) {
