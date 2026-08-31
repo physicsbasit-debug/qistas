@@ -1,10 +1,10 @@
 import { buildScenarioReportHtml } from './export.js';
 
-export const A4_LANDSCAPE_PT = Object.freeze({ width: 841.89, height: 595.28 });
+export const A4_PORTRAIT_PT = Object.freeze({ width: 595.28, height: 841.89 });
 
-const PAGE_WIDTH_PX = 1123;
-const PAGE_HEIGHT_PX = Math.round(PAGE_WIDTH_PX / Math.SQRT2);
-const PAGE_MARGIN_PX = 23;
+const PAGE_WIDTH_PX = 794;
+const PAGE_HEIGHT_PX = 1123;
+const PAGE_MARGIN_PX = 18;
 const RENDER_SCALE = 2;
 
 function encodeAscii(value) {
@@ -39,11 +39,11 @@ export function buildPdfFromJpegPages(pages = []) {
     const contentObject = pageObject + 2;
     pageRefs.push(`${pageObject} 0 R`);
 
-    const content = `q\n${A4_LANDSCAPE_PT.width} 0 0 ${A4_LANDSCAPE_PT.height} 0 0 cm\n/Im${index} Do\nQ\n`;
+    const content = `q\n${A4_PORTRAIT_PT.width} 0 0 ${A4_PORTRAIT_PT.height} 0 0 cm\n/Im${index} Do\nQ\n`;
     const contentBytes = encodeAscii(content);
 
     objects[pageObject] = encodeAscii(
-      `${pageObject} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${A4_LANDSCAPE_PT.width} ${A4_LANDSCAPE_PT.height}] /Resources << /XObject << /Im${index} ${imageObject} 0 R >> >> /Contents ${contentObject} 0 R >>\nendobj\n`,
+      `${pageObject} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${A4_PORTRAIT_PT.width} ${A4_PORTRAIT_PT.height}] /Resources << /XObject << /Im${index} ${imageObject} 0 R >> >> /Contents ${contentObject} 0 R >>\nendobj\n`,
     );
 
     objects[imageObject] = concatBytes([
@@ -159,47 +159,25 @@ function canvasToJpegBytes(canvas, quality = 0.93) {
 function pageCanvasesFromReport(sourceCanvas) {
   const targetWidth = PAGE_WIDTH_PX * RENDER_SCALE;
   const targetHeight = PAGE_HEIGHT_PX * RENDER_SCALE;
-  const pages = [];
+  const page = document.createElement('canvas');
+  page.width = targetWidth;
+  page.height = targetHeight;
 
-  // التقرير المعتاد صُمم لصفحة واحدة. عند زيادة المحتوى كثيرًا نقسمه إلى صفحات فعلية
-  // بدل تصغيره إلى درجة تفقد القراءة.
-  const fitScale = Math.min(targetWidth / sourceCanvas.width, targetHeight / sourceCanvas.height);
-  if (fitScale >= 0.82) {
-    const page = document.createElement('canvas');
-    page.width = targetWidth;
-    page.height = targetHeight;
-    const context = page.getContext('2d', { alpha: false });
-    context.fillStyle = '#ffffff';
-    context.fillRect(0, 0, page.width, page.height);
-    const width = sourceCanvas.width * fitScale;
-    const height = sourceCanvas.height * fitScale;
-    context.drawImage(sourceCanvas, (page.width - width) / 2, 0, width, height);
-    return [page];
-  }
+  const context = page.getContext('2d', { alpha: false });
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, page.width, page.height);
 
-  const sourcePageHeight = Math.floor(sourceCanvas.width / Math.SQRT2);
-  for (let sourceY = 0; sourceY < sourceCanvas.height; sourceY += sourcePageHeight) {
-    const cropHeight = Math.min(sourcePageHeight, sourceCanvas.height - sourceY);
-    const page = document.createElement('canvas');
-    page.width = targetWidth;
-    page.height = targetHeight;
-    const context = page.getContext('2d', { alpha: false });
-    context.fillStyle = '#ffffff';
-    context.fillRect(0, 0, page.width, page.height);
-    context.drawImage(
-      sourceCanvas,
-      0,
-      sourceY,
-      sourceCanvas.width,
-      cropHeight,
-      0,
-      0,
-      targetWidth,
-      Math.round(targetWidth * (cropHeight / sourceCanvas.width)),
-    );
-    pages.push(page);
-  }
-  return pages;
+  const padding = PAGE_MARGIN_PX * RENDER_SCALE;
+  const usableWidth = targetWidth - (padding * 2);
+  const usableHeight = targetHeight - (padding * 2);
+  const fitScale = Math.min(usableWidth / sourceCanvas.width, usableHeight / sourceCanvas.height);
+  const drawWidth = sourceCanvas.width * fitScale;
+  const drawHeight = sourceCanvas.height * fitScale;
+  const drawX = Math.round((targetWidth - drawWidth) / 2);
+  const drawY = padding;
+
+  context.drawImage(sourceCanvas, drawX, drawY, drawWidth, drawHeight);
+  return [page];
 }
 
 async function renderReportCanvas(html) {
