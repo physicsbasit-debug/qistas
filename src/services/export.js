@@ -33,9 +33,8 @@ export function formatSectionList(values) {
   return sections.length ? sections.map(String).join('، ') : '—';
 }
 
-// Backward-compatible helper kept for Excel/export consumers that still
-// compress consecutive section numbers. The official PDF report intentionally
-// uses formatSectionList so manual section swaps remain explicit and auditable.
+// Backward-compatible helper for Excel/export consumers. The official PDF
+// intentionally uses formatSectionList so manual section swaps remain explicit.
 export function formatSectionRanges(values) {
   const sections = numericSections(values);
   if (!sections.length) return '—';
@@ -209,22 +208,22 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
       direction: rtl;
       writing-mode: horizontal-tb;
       font-family: Tahoma, Arial, sans-serif;
-      font-size: 9.15pt;
-      line-height: 1.24;
+      font-size: 9.35pt;
+      line-height: 1.20;
     }
     .report { width: 100%; }
     .report-header {
       border: 1px solid #d8e5e2;
       border-top: 4px solid #0f766e;
       border-radius: 14px;
-      padding: 9px 11px 10px;
+      padding: 7px 10px 8px;
       background: linear-gradient(135deg, #ffffff 0%, #f2faf8 100%);
     }
     .header-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: 8px;
     }
     .brand { display: flex; align-items: center; gap: 8px; }
     .brand-mark {
@@ -239,61 +238,61 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
       font-weight: 800;
     }
     .brand strong { display: block; color: #0a5c56; font-size: 14px; }
-    .brand span { display: block; color: #61706e; font-size: 7.9pt; }
+    .brand span { display: block; color: #61706e; font-size: 8.3pt; }
     .status-box { text-align: left; }
-    .status-box span { display: block; color: #6b7775; font-size: 7.6pt; }
+    .status-box span { display: block; color: #6b7775; font-size: 8pt; }
     .status-pill {
       display: inline-block;
       margin-top: 3px;
       padding: 4px 10px;
       border-radius: 999px;
       font-weight: 800;
-      font-size: 8pt;
+      font-size: 8.4pt;
     }
     .status-pill.approved { color: #116149; background: #e6f7ef; border: 1px solid #b9e3d2; }
     .status-pill.draft { color: #8a5a00; background: #fff6dc; border: 1px solid #eed89b; }
     .status-pill.proposal { color: #355f76; background: #edf6fb; border: 1px solid #c9dfeb; }
     .report-title { margin: 7px 0 0; font-size: 16.5px; line-height: 1.15; }
-    .report-subtitle { margin: 2px 0 0; color: #65726f; font-size: 8.2pt; }
+    .report-subtitle { margin: 2px 0 0; color: #65726f; font-size: 8.6pt; }
     .meta-grid {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 5px;
-      margin-top: 7px;
+      gap: 4px;
+      margin-top: 5px;
     }
     .meta-item {
       border: 1px solid #e0e9e7;
       border-radius: 8px;
       background: rgba(255,255,255,.88);
-      padding: 5px 6px;
+      padding: 4px 5px;
       min-width: 0;
     }
-    .meta-item span { display: block; color: #73807e; font-size: 7.1pt; }
-    .meta-item strong { display: block; margin-top: 1px; color: #263c39; font-size: 8.2pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .meta-item span { display: block; color: #73807e; font-size: 8pt; }
+    .meta-item strong { display: block; margin-top: 1px; color: #263c39; font-size: 8.5pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .metrics {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 5px;
-      margin: 7px 0 8px;
+      gap: 4px;
+      margin: 5px 0 6px;
     }
     .metric {
       border: 1px solid #dfe8e6;
       border-radius: 9px;
       background: #f8fbfa;
-      padding: 5px 7px;
+      padding: 4px 6px;
       text-align: center;
     }
-    .metric span { display: block; color: #6c7977; font-size: 7.2pt; }
-    .metric strong { display: block; margin-top: 2px; color: #132c29; font-size: 12px; }
+    .metric span { display: block; color: #6c7977; font-size: 8pt; }
+    .metric strong { display: block; margin-top: 1px; color: #132c29; font-size: 12.5px; }
     .section-title {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
-      margin: 6px 0 4px;
+      gap: 6px;
+      margin: 4px 0 3px;
     }
     .section-title h2 { margin: 0; color: #153c37; font-size: 11.3pt; }
-    .section-title span { color: #71807d; font-size: 7.2pt; }
+    .section-title span { color: #71807d; font-size: 8pt; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; }
     thead { display: table-header-group; }
     tr { break-inside: avoid; page-break-inside: avoid; }
@@ -302,18 +301,19 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
       border: 1px solid #d7e4e1;
       border-radius: 10px;
       overflow: hidden;
-      font-size: 8.85pt;
+      font-size: 9.15pt;
     }
     .teacher-table th {
-      padding: 6px 6px;
+      padding: 5px 6px;
       color: #fff;
+      font-size: 10pt;
       background: #0f766e;
       border-left: 1px solid rgba(255,255,255,.18);
       font-weight: 800;
       text-align: right;
     }
     .teacher-table td {
-      padding: 5px 6px;
+      padding: 4px 6px;
       vertical-align: top;
       border-bottom: 1px solid #e3ebe9;
       border-left: 1px solid #edf2f1;
@@ -326,56 +326,56 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
     .teacher-table th.col-assignments, .teacher-table td.assignments-cell { width: 57%; }
     .teacher-table th.col-load, .teacher-table td.load-cell { width: 15%; }
     .teacher-meta { display: grid; gap: 2px; }
-    .teacher-display { display: block; font-size: 10.4pt; color: #153c37; }
-    .teacher-subline { display: block; color: #62726f; font-size: 8.15pt; }
-    .teacher-note { display: block; color: #0f766e; font-size: 7.7pt; font-weight: 700; }
+    .teacher-display { display: block; font-size: 10.5pt; color: #153c37; }
+    .teacher-subline { display: block; color: #62726f; font-size: 8.8pt; }
+    .teacher-note { display: block; color: #0f766e; font-size: 8.2pt; font-weight: 700; }
     .assignment-row {
       display: grid;
       grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) auto;
       align-items: center;
-      gap: 5px;
-      padding: 1px 0;
+      gap: 3px;
+      padding: 0;
       border-bottom: 1px dotted #dbe4e2;
     }
     .assignment-row:last-child { border-bottom: 0; }
-    .assignment-row strong { color: #203e3a; font-size: 8.55pt; }
-    .assignment-row span { color: #516360; font-size: 8.25pt; }
+    .assignment-row strong { color: #203e3a; font-size: 9.2pt; }
+    .assignment-row span { color: #516360; font-size: 9.3pt; font-weight: 600; }
     .assignment-row em {
       color: #0f766e;
       font-style: normal;
       font-weight: 800;
       white-space: nowrap;
-      font-size: 8.1pt;
+      font-size: 9pt;
     }
     .load-cell { text-align: center; vertical-align: middle; }
     .load-badge { display: grid; gap: 1px; }
     .load-badge strong { color: #0f766e; font-size: 12.4px; }
-    .load-badge span { color: #74817f; font-size: 7.2pt; }
-    .empty { color: #8b9694; font-size: 8.2pt; }
-    .coverage-section { margin-top: 7px; }
+    .load-badge span { color: #74817f; font-size: 8.1pt; }
+    .empty { color: #8b9694; font-size: 8.8pt; }
+    .coverage-section { margin-top: 5px; }
     .coverage-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 5px;
+      gap: 4px;
     }
     .coverage-card {
       min-width: 0;
       border: 1px solid #d9e5e2;
       border-radius: 8px;
       background: #fbfdfc;
-      padding: 5px 6px;
+      padding: 4px 5px;
       display: grid;
       grid-template-columns: 1fr auto;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
     }
     .coverage-card.complete { border-right: 3px solid #49a58f; }
     .coverage-card.incomplete { border-right: 3px solid #d99048; background: #fffaf3; }
-    .coverage-card-title strong { display: block; color: #244f49; font-size: 8.1pt; }
-    .coverage-card-title span { display: block; color: #788582; font-size: 7.2pt; }
-    .coverage-card-values { text-align: left; white-space: nowrap; color: #64716f; font-size: 7.2pt; }
+    .coverage-card-title strong { display: block; color: #244f49; font-size: 8.6pt; }
+    .coverage-card-title span { display: block; color: #788582; font-size: 8.2pt; }
+    .coverage-card-values { text-align: left; white-space: nowrap; color: #64716f; font-size: 8.3pt; }
     .coverage-card-values span { display: block; }
-    .coverage-card-values b { color: #0f766e; font-size: 8pt; }
+    .coverage-card-values b { color: #0f766e; font-size: 8.6pt; }
     .unassigned-note {
       margin-top: 6px;
       border: 1px solid #efc5bf;
@@ -389,25 +389,25 @@ export function buildScenarioReportHtml(scenario, data, options = {}) {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
-      margin-top: 9px;
+      margin-top: 6px;
     }
     .signature {
-      min-height: 34px;
+      min-height: 28px;
       border-top: 1px solid #9fb1ae;
-      padding-top: 5px;
+      padding-top: 4px;
       color: #667472;
-      font-size: 8pt;
+      font-size: 8.3pt;
     }
     .signature strong { display: inline-block; color: #284743; margin-left: 8px; }
     .report-footer {
-      margin-top: 7px;
-      padding-top: 4px;
+      margin-top: 5px;
+      padding-top: 3px;
       border-top: 1px solid #dfe8e6;
       display: flex;
       justify-content: space-between;
       gap: 8px;
       color: #7a8785;
-      font-size: 7.2pt;
+      font-size: 7.8pt;
     }
     @media screen {
       body { background: #eef4f2; padding: 18px; }

@@ -4,7 +4,7 @@ export const A4_PORTRAIT_PT = Object.freeze({ width: 595.28, height: 841.89 });
 
 const PAGE_WIDTH_PX = 794;
 const PAGE_HEIGHT_PX = 1123;
-const PAGE_MARGIN_PX = 18;
+const PAGE_MARGIN_PX = 10;
 const RENDER_SCALE = 2;
 
 function encodeAscii(value) {

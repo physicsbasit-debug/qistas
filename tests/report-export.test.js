@@ -117,8 +117,12 @@ test('portrait report uses the compact three-column teacher layout', () => {
     /\.teacher-table th\.col-load, \.teacher-table td\.load-cell \{ width: 15%; \}/,
   );
 
-  assert.match(html, /\.teacher-display \{ display: block; font-size: 10\.4pt;/);
-  assert.match(html, /font-size: 8\.85pt;/);
+  assert.match(html, /\.teacher-display \{ display: block; font-size: 10\.5pt;/);
+  assert.match(html, /font-size: 9\.15pt;/);
+  assert.match(html, /\.teacher-subline \{ display: block; color: #62726f; font-size: 8\.8pt;/);
+  assert.match(html, /\.assignment-row strong \{ color: #203e3a; font-size: 9\.2pt;/);
+  assert.match(html, /\.assignment-row span \{ color: #516360; font-size: 9\.3pt;/);
+  assert.match(html, /font-size: 9pt;/);
   assert.match(html, /عبدالعزيز اليحيائي/);
   assert.match(html, /الأحياء/);
 });
