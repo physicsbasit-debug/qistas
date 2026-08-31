@@ -944,7 +944,7 @@ function refreshDraftScenario(assignments, unassigned, notice = '') {
       id: 'draft-plan',
       label: 'الخطة قيد التعديل',
       tag: 'مسودة',
-      description: 'ثبّت التوزيع المقبول، وانقل شعبة عند الحاجة، ثم أعد توزيع الجزء المتبقي فقط.',
+      description: 'ثبّت التوزيع المقبول، وانقل شعبة أو بدّل رقمها عند الحاجة، ثم أعد توزيع الجزء المتبقي فقط.',
       relocationCount: previous.relocationCount,
       repairedCount: previous.repairedCount,
     },
@@ -970,6 +970,16 @@ function draftFixedAssignments() {
     }));
 }
 
+function manualTransferDecision(teacher, assignment) {
+  const regularStatus = getAssignmentStatus(teacher, assignment);
+  const transferStatus = getManualTransferStatus(teacher, assignment);
+  return {
+    transferStatus,
+    manualOverride: regularStatus === ASSIGNMENT_STATUS.FORBIDDEN
+      && transferStatus !== ASSIGNMENT_STATUS.FORBIDDEN,
+  };
+}
+
 function transferCandidates(assignment) {
   if (!assignment || !state.draft?.scenario) return [];
   const lockedTeachers = lockedTeacherSet();
@@ -986,16 +996,13 @@ function transferCandidates(assignment) {
     .map((teacher) => {
       const currentLoad = summaryByTeacher.get(teacher.id)?.load || 0;
       const maxLoad = teacherMaxLoad(teacher, state.data.settings);
-      const regularStatus = getAssignmentStatus(teacher, assignment);
-      const transferStatus = getManualTransferStatus(teacher, assignment);
+      const decision = manualTransferDecision(teacher, assignment);
       return {
         teacher,
         currentLoad,
         projectedLoad: currentLoad + assignment.periods,
         maxLoad,
-        transferStatus,
-        manualOverride: regularStatus === ASSIGNMENT_STATUS.FORBIDDEN
-          && transferStatus !== ASSIGNMENT_STATUS.FORBIDDEN,
+        ...decision,
       };
     })
     .filter((candidate) => (
@@ -1003,6 +1010,44 @@ function transferCandidates(assignment) {
       && candidate.projectedLoad <= candidate.maxLoad
     ))
     .sort((a, b) => a.projectedLoad - b.projectedLoad
+      || a.teacher.name.localeCompare(b.teacher.name, 'ar'));
+}
+
+function sectionSwapCandidates(assignment) {
+  const scenario = state.draft?.scenario;
+  if (!assignment || !scenario) return [];
+  const lockedTeachers = lockedTeacherSet();
+  const sourceTeacher = state.data.teachers.find(
+    (teacher) => teacher.id === assignment.teacherId,
+  );
+  if (!sourceTeacher?.active || lockedTeachers.has(sourceTeacher.id)) return [];
+
+  return scenario.assignments
+    .filter((candidateAssignment) => (
+      candidateAssignment.taskId !== assignment.taskId
+      && candidateAssignment.teacherId !== assignment.teacherId
+      && candidateAssignment.requirementId === assignment.requirementId
+      && candidateAssignment.periods === assignment.periods
+      && !lockedTeachers.has(candidateAssignment.teacherId)
+    ))
+    .map((candidateAssignment) => {
+      const teacher = state.data.teachers.find(
+        (item) => item.id === candidateAssignment.teacherId,
+      );
+      if (!teacher?.active) return null;
+      return {
+        assignment: candidateAssignment,
+        teacher,
+        sourcePlacement: manualTransferDecision(teacher, assignment),
+        targetPlacement: manualTransferDecision(sourceTeacher, candidateAssignment),
+      };
+    })
+    .filter((candidate) => (
+      candidate
+      && candidate.sourcePlacement.transferStatus !== ASSIGNMENT_STATUS.FORBIDDEN
+      && candidate.targetPlacement.transferStatus !== ASSIGNMENT_STATUS.FORBIDDEN
+    ))
+    .sort((a, b) => Number(a.assignment.section) - Number(b.assignment.section)
       || a.teacher.name.localeCompare(b.teacher.name, 'ar'));
 }
 
@@ -1014,28 +1059,49 @@ function draftTransferPanel() {
   if (!assignment) return '';
   const currentTeacher = state.data.teachers.find((teacher) => teacher.id === assignment.teacherId);
   const candidates = transferCandidates(assignment);
+  const swapCandidates = sectionSwapCandidates(assignment);
   const pinned = pinnedTaskSet().has(assignment.taskId);
 
   return `
     <section class="transfer-panel no-print">
       <div class="transfer-heading">
         <div>
-          <p class="eyebrow">نقل شعبة</p>
+          <p class="eyebrow">تعديل إسناد الشعبة</p>
           <h3>${esc(assignment.subject)} · ${esc(assignment.grade)} / ${assignment.section}</h3>
           <p class="muted">حاليًا لدى ${esc(currentTeacher?.name || 'معلم غير معروف')} · ${assignment.periods} حصص.</p>
         </div>
         <button class="icon-button" data-action="cancel-transfer" title="إغلاق">×</button>
       </div>
-      ${candidates.length ? `
-        <div class="transfer-candidates">
-          ${candidates.map((candidate) => `
-            <button class="transfer-candidate" data-action="move-task" data-task-id="${assignment.taskId}" data-teacher-id="${candidate.teacher.id}">
-              <strong>${esc(candidate.teacher.name)}</strong>
-              <span>${candidate.currentLoad} ← ${candidate.projectedLoad} من ${candidate.maxLoad}${candidate.manualOverride ? ' · متاح لعلوم الثامن' : ''}</span>
-            </button>`).join('')}
-        </div>` : '<div class="alert warning">لا يوجد معلم بديل مسموح له بهذه الشعبة ولديه سعة كافية.</div>'}
+      <div class="transfer-option-group">
+        <div class="transfer-option-heading">
+          <strong>نقل الشعبة</strong>
+          <span>ينقل الشعبة إلى معلم آخر وقد يتغير نصاب المعلمين.</span>
+        </div>
+        ${candidates.length ? `
+          <div class="transfer-candidates">
+            ${candidates.map((candidate) => `
+              <button class="transfer-candidate" data-action="move-task" data-task-id="${assignment.taskId}" data-teacher-id="${candidate.teacher.id}">
+                <strong>${esc(candidate.teacher.name)}</strong>
+                <span>${candidate.currentLoad} ← ${candidate.projectedLoad} من ${candidate.maxLoad}${candidate.manualOverride ? ' · متاح لعلوم الثامن' : ''}</span>
+              </button>`).join('')}
+          </div>` : '<div class="alert warning">لا يوجد معلم بديل مسموح له بهذه الشعبة ولديه سعة كافية.</div>'}
+      </div>
+      <div class="transfer-option-group swap-option-group">
+        <div class="transfer-option-heading">
+          <strong>تبديل رقم الشعبة</strong>
+          <span>يبدّلها مع شعبة من الصف والمادة نفسيهما، ويبقى نصاب المعلمين كما هو.</span>
+        </div>
+        ${swapCandidates.length ? `
+          <div class="transfer-candidates">
+            ${swapCandidates.map((candidate) => `
+              <button class="transfer-candidate swap-candidate" data-action="swap-task" data-task-id="${assignment.taskId}" data-swap-task-id="${candidate.assignment.taskId}">
+                <strong>${esc(candidate.assignment.grade)} / ${candidate.assignment.section} · ${esc(candidate.teacher.name)}</strong>
+                <span>تبديل ${esc(assignment.grade)} / ${assignment.section} ↔ ${esc(candidate.assignment.grade)} / ${candidate.assignment.section}</span>
+              </button>`).join('')}
+          </div>` : '<p class="muted transfer-empty">لا توجد شعبة مماثلة لدى معلم آخر متاح للتبديل.</p>'}
+      </div>
       <div class="transfer-footer">
-        <span>${pinned ? 'هذه الشعبة مثبتة ولن تتغير عند إعادة التوزيع.' : 'عند نقل الشعبة ستُثبت تلقائيًا حتى لا يعيد المحرك إرجاعها.'}</span>
+        <span>${pinned ? 'هذه الشعبة مثبتة ولن تتغير عند إعادة التوزيع.' : 'عند النقل ستُثبت الشعبة، وعند التبديل ستُثبت الشعبتان تلقائيًا.'}</span>
         ${pinned ? `<button class="text-button" data-action="unpin-task" data-task-id="${assignment.taskId}">فك تثبيت الشعبة</button>` : ''}
       </div>
     </section>`;
@@ -1061,7 +1127,7 @@ function draftPanel() {
         <div>
           <p class="eyebrow">مساحة العمل</p>
           <h2>${draft.approved ? 'الخطة المعتمدة' : 'الخطة قيد التعديل'} ${draft.approved ? '<span class="approval-badge">معتمدة</span>' : ''}</h2>
-          <p class="muted">ثبّت المعلمين الذين أعجبك توزيعهم، وانقل أي شعبة بنقرة، ثم دع قِسطاس يعيد توزيع الباقي فقط.</p>
+          <p class="muted">ثبّت المعلمين الذين أعجبك توزيعهم، وانقل شعبة أو بدّل رقمها مع معلم آخر، ثم دع قِسطاس يعيد توزيع الباقي فقط.</p>
           ${approvedDate ? `<small class="approved-date">آخر اعتماد: ${esc(approvedDate)}</small>` : ''}
         </div>
         <div class="actions no-print">
@@ -1318,7 +1384,7 @@ function adoptSelectedModel() {
         id: 'draft-plan',
         label: 'الخطة قيد التعديل',
         tag: 'مسودة',
-        description: 'خطة مأخوذة من أحد النماذج، ويمكن تثبيت أجزاء منها أو نقل الشعب.',
+        description: 'خطة مأخوذة من أحد النماذج، ويمكن تثبيت أجزاء منها أو نقل الشعب وتبديل أرقامها.',
         relocationCount: scenario.relocationCount,
         repairedCount: scenario.repairedCount,
       },
@@ -1401,6 +1467,74 @@ function moveDraftTask(taskId, teacherId) {
     assignments,
     scenario.unassigned,
     `تم نقل ${assignment.subject} · ${assignment.grade} / ${assignment.section} إلى ${destination.name} وتثبيت الشعبة.`,
+  );
+  render();
+}
+
+function swapDraftTasks(taskId, swapTaskId) {
+  const draft = ensureDraftShape();
+  const scenario = draft?.scenario;
+  if (!scenario) return;
+  const assignment = scenario.assignments.find((item) => item.taskId === taskId);
+  const swapAssignment = scenario.assignments.find((item) => item.taskId === swapTaskId);
+  if (!assignment || !swapAssignment || assignment.taskId === swapAssignment.taskId) return;
+
+  const sourceTeacher = state.data.teachers.find(
+    (teacher) => teacher.id === assignment.teacherId,
+  );
+  const swapTeacher = state.data.teachers.find(
+    (teacher) => teacher.id === swapAssignment.teacherId,
+  );
+  if (!sourceTeacher || !swapTeacher) return;
+
+  const lockedTeachers = lockedTeacherSet();
+  if (lockedTeachers.has(sourceTeacher.id) || lockedTeachers.has(swapTeacher.id)) {
+    draft.notice = 'فك تثبيت المعلمين أولًا قبل تبديل الشعب بينهما.';
+    draft.noticeType = 'warning';
+    persistDraft();
+    render();
+    return;
+  }
+
+  const candidate = sectionSwapCandidates(assignment).find(
+    (item) => item.assignment.taskId === swapAssignment.taskId,
+  );
+  if (!candidate) {
+    draft.notice = 'تعذر التبديل: يجب أن تكون الشعبتان من الصف والمادة نفسيهما ولدى معلمين متاحين.';
+    draft.noticeType = 'warning';
+    persistDraft();
+    render();
+    return;
+  }
+
+  const assignments = scenario.assignments.map((item) => {
+    if (item.taskId === assignment.taskId) {
+      return {
+        ...item,
+        teacherId: swapTeacher.id,
+        preference: candidate.sourcePlacement.transferStatus,
+        manualOverride: candidate.sourcePlacement.manualOverride,
+      };
+    }
+    if (item.taskId === swapAssignment.taskId) {
+      return {
+        ...item,
+        teacherId: sourceTeacher.id,
+        preference: candidate.targetPlacement.transferStatus,
+        manualOverride: candidate.targetPlacement.manualOverride,
+      };
+    }
+    return item;
+  });
+  const pinned = pinnedTaskSet();
+  pinned.add(assignment.taskId);
+  pinned.add(swapAssignment.taskId);
+  draft.pinnedTaskIds = [...pinned];
+  draft.selectedTaskId = '';
+  refreshDraftScenario(
+    assignments,
+    scenario.unassigned,
+    `تم تبديل ${assignment.subject} · ${assignment.grade} / ${assignment.section} مع ${swapAssignment.grade} / ${swapAssignment.section} بين ${sourceTeacher.name} و${swapTeacher.name}، وتثبيت الشعبتين.`,
   );
   render();
 }
@@ -1498,7 +1632,7 @@ function render() {
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.3.5 · نقل مرن لعلوم الصف الثامن</span>
+            <span class="status-pill">الإصدار 1.3.6 · تبديل الشعب بين المعلمين</span>
             <h1>خطّط الأنصبة بوضوح،<br><em>واعتمد التوزيع بثقة.</em></h1>
             <p>حدّد المادة أو القسم، أدخل بيانات الشعب والمعلمين، ثم راجع توزيعًا متوازنًا واطلب بديلًا عند الحاجة.</p>
             <div class="hero-features"><span>✓ تهيئة حسب المادة</span><span>✓ الصفوف من 1 إلى 12</span><span>✓ بدائل محفوظة عند الطلب</span></div>
@@ -1855,6 +1989,10 @@ app.addEventListener('click', async (event) => {
   }
 
   if (action === 'move-task') moveDraftTask(button.dataset.taskId, button.dataset.teacherId);
+
+  if (action === 'swap-task') {
+    swapDraftTasks(button.dataset.taskId, button.dataset.swapTaskId);
+  }
 
   if (action === 'unpin-task' && state.draft) {
     const pinned = pinnedTaskSet();

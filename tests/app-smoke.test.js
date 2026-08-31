@@ -49,7 +49,7 @@ test('app keeps the existing distribution workflow after merging setup sections'
   assert.match(appRoot.innerHTML, /عدد المعلمين/);
   assert.match(appRoot.innerHTML, /الشعب والحصص/);
   assert.match(appRoot.innerHTML, /الخطوة 1 من 3/);
-  assert.match(appRoot.innerHTML, /الإصدار 1\.3\.5/);
+  assert.match(appRoot.innerHTML, /الإصدار 1\.3\.6/);
   assert.match(appRoot.innerHTML, /خطّط الأنصبة بوضوح/);
   assert.match(appRoot.innerHTML, /واعتمد التوزيع بثقة/);
   assert.match(appRoot.innerHTML, /إجمالي الحصص الأسبوعية/);
@@ -177,6 +177,108 @@ test('grade-eight general science can be moved between physics, chemistry, and b
   assert.equal(savedDraft.scenario.assignments[0].teacherId, 'chemistry');
   assert.equal(savedDraft.scenario.assignments[0].manualOverride, true);
   assert.match(appRoot.innerHTML, /حافظ قِسطاس على 1 تكليفات مثبتة/);
+});
+
+test('two section numbers can be swapped atomically between teachers and stay pinned', async () => {
+  const specialtyOnly = {
+    mode: POLICY_MODES.SPECIALTY_ONLY,
+    grade: '',
+    requirementId: '',
+    extraRequirementId: '',
+    selectedRequirementIds: [],
+  };
+  const teachers = [
+    { id: 'teacher-a', name: 'المعلم الأول', specialty: 'الفيزياء', isLead: false, active: true, assignmentPolicy: specialtyOnly },
+    { id: 'teacher-b', name: 'المعلم الثاني', specialty: 'الفيزياء', isLead: false, active: true, assignmentPolicy: specialtyOnly },
+  ];
+  const requirements = [
+    { id: 'g10-physics', grade: 'العاشر', subject: 'الفيزياء', sections: 3, periodsPerSection: 5 },
+  ];
+  const settings = { teacherMaxLoad: 18, leadMaxLoad: 14, schoolShift: 'single' };
+  const scenario = evaluateScenario(
+    teachers,
+    requirements,
+    settings,
+    [
+      { taskId: 'g10-physics-s1', teacherId: 'teacher-a' },
+      { taskId: 'g10-physics-s2', teacherId: 'teacher-a' },
+      { taskId: 'g10-physics-s3', teacherId: 'teacher-b' },
+    ],
+    [],
+    { id: 'draft-plan', label: 'الخطة قيد التعديل', tag: 'مسودة' },
+  );
+  const data = {
+    planId: 'section-swap-test',
+    planName: 'توزيع أنصبة الفيزياء',
+    schoolName: 'مدرسة اختبار',
+    departmentName: 'قسم العلوم',
+    academicYear: '2026/2027',
+    gradeRange: { start: 8, end: 10 },
+    planScope: {
+      mode: 'single',
+      templateId: '',
+      subjectId: 'physics',
+      selectedSubjectIds: ['physics'],
+      teacherCount: 2,
+      hasLead: false,
+    },
+    settings,
+    teachers,
+    requirements,
+  };
+  const draft = {
+    sourceScenarioId: 'section-swap-test',
+    scenario,
+    lockedTeacherIds: [],
+    pinnedTaskIds: [],
+    selectedTaskId: '',
+    approved: false,
+    approvedAt: '',
+    notice: '',
+    noticeType: 'success',
+    rebalanceRound: 0,
+  };
+  const { listeners, appRoot, storage } = createBrowserHarness({
+    'qistas:v1': JSON.stringify(data),
+    'qistas:workspace:v1': JSON.stringify({ draft }),
+  });
+
+  await import(`../src/app.js?section-swap=${Date.now()}`);
+  const click = listeners.get('click');
+
+  await click(clickEvent({ action: 'select-transfer', taskId: 'g10-physics-s2' }));
+  assert.match(appRoot.innerHTML, /تبديل رقم الشعبة/);
+  assert.match(
+    appRoot.innerHTML,
+    /data-action="swap-task"[^>]+data-task-id="g10-physics-s2"[^>]+data-swap-task-id="g10-physics-s3"/,
+  );
+
+  await click(clickEvent({
+    action: 'swap-task',
+    taskId: 'g10-physics-s2',
+    swapTaskId: 'g10-physics-s3',
+  }));
+  let savedDraft = JSON.parse(storage.get('qistas:workspace:v1')).draft;
+  let assignmentByTask = new Map(
+    savedDraft.scenario.assignments.map((assignment) => [assignment.taskId, assignment]),
+  );
+  assert.equal(assignmentByTask.get('g10-physics-s2').teacherId, 'teacher-b');
+  assert.equal(assignmentByTask.get('g10-physics-s3').teacherId, 'teacher-a');
+  assert.equal(savedDraft.scenario.summaries.find((item) => item.teacherId === 'teacher-a').load, 10);
+  assert.equal(savedDraft.scenario.summaries.find((item) => item.teacherId === 'teacher-b').load, 5);
+  assert.deepEqual(new Set(savedDraft.pinnedTaskIds), new Set([
+    'g10-physics-s2',
+    'g10-physics-s3',
+  ]));
+  assert.match(appRoot.innerHTML, /تم تبديل الفيزياء · العاشر \/ 2 مع العاشر \/ 3/);
+
+  await click(clickEvent({ action: 'rebalance-draft' }));
+  savedDraft = JSON.parse(storage.get('qistas:workspace:v1')).draft;
+  assignmentByTask = new Map(
+    savedDraft.scenario.assignments.map((assignment) => [assignment.taskId, assignment]),
+  );
+  assert.equal(assignmentByTask.get('g10-physics-s2').teacherId, 'teacher-b');
+  assert.equal(assignmentByTask.get('g10-physics-s3').teacherId, 'teacher-a');
 });
 
 test('choosing one subject prepares a clean isolated plan and teacher list', async () => {

@@ -519,6 +519,23 @@ summary { cursor: pointer; font-weight: 700; }
   gap: 14px;
 }
 .transfer-heading h3 { margin-bottom: 5px; }
+.transfer-option-group {
+  display: grid;
+  gap: 10px;
+  padding-top: 2px;
+}
+.transfer-option-group + .transfer-option-group {
+  padding-top: 14px;
+  border-top: 1px solid #d9ebe7;
+}
+.transfer-option-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.transfer-option-heading strong { font-size: 13px; }
+.transfer-option-heading span,
+.transfer-empty { color: var(--muted); font-size: 11px; }
 .transfer-candidates {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -536,6 +553,11 @@ summary { cursor: pointer; font-weight: 700; }
 }
 .transfer-candidate:hover { border-color: var(--primary); background: #f4fbf9; }
 .transfer-candidate span { color: var(--muted); font-size: 11px; }
+.swap-candidate {
+  border-color: #d9c987;
+  background: #fffdf5;
+}
+.swap-candidate:hover { border-color: #ae8b18; background: #fff9df; }
 .transfer-footer {
   display: flex;
   justify-content: space-between;
@@ -555,6 +577,7 @@ summary { cursor: pointer; font-weight: 700; }
   .editable-teacher-card header { flex-direction: column; }
   .assignment-button { width: 100%; justify-content: space-between; }
   .transfer-candidates { grid-template-columns: 1fr; }
+  .transfer-option-heading { align-items: flex-start; flex-direction: column; gap: 3px; }
   .transfer-footer { align-items: flex-start; flex-direction: column; }
 }
 
