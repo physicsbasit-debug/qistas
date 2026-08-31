@@ -19,6 +19,7 @@ import {
   validateFixedAssignments,
   validateInputs,
 } from './engine/distribution.js';
+import { canAssignGrade, gradeLimitViolations } from './domain/gradeLimit.js';
 import {
   clearAppData,
   clearWorkspace,
@@ -1008,6 +1009,11 @@ function transferCandidates(assignment) {
     .filter((candidate) => (
       candidate.transferStatus !== ASSIGNMENT_STATUS.FORBIDDEN
       && candidate.projectedLoad <= candidate.maxLoad
+      && canAssignGrade(
+        state.draft.scenario.assignments,
+        candidate.teacher.id,
+        assignment.grade,
+      )
     ))
     .sort((a, b) => a.projectedLoad - b.projectedLoad
       || a.teacher.name.localeCompare(b.teacher.name, 'ar'));
@@ -1046,6 +1052,18 @@ function sectionSwapCandidates(assignment) {
       candidate
       && candidate.sourcePlacement.transferStatus !== ASSIGNMENT_STATUS.FORBIDDEN
       && candidate.targetPlacement.transferStatus !== ASSIGNMENT_STATUS.FORBIDDEN
+      && canAssignGrade(
+        scenario.assignments,
+        candidate.teacher.id,
+        assignment.grade,
+        { excludingTaskIds: [candidate.assignment.taskId] },
+      )
+      && canAssignGrade(
+        scenario.assignments,
+        sourceTeacher.id,
+        candidate.assignment.grade,
+        { excludingTaskIds: [assignment.taskId] },
+      )
     ))
     .sort((a, b) => Number(a.assignment.section) - Number(b.assignment.section)
       || a.teacher.name.localeCompare(b.teacher.name, 'ar'));
@@ -1084,7 +1102,7 @@ function draftTransferPanel() {
                 <strong>${esc(candidate.teacher.name)}</strong>
                 <span>${candidate.currentLoad} ← ${candidate.projectedLoad} من ${candidate.maxLoad}${candidate.manualOverride ? ' · متاح لعلوم الثامن' : ''}</span>
               </button>`).join('')}
-          </div>` : '<div class="alert warning">لا يوجد معلم بديل مسموح له بهذه الشعبة ولديه سعة كافية.</div>'}
+          </div>` : '<div class="alert warning">لا يوجد معلم بديل مسموح له بهذه الشعبة ولديه سعة كافية ولا يتجاوز حد الصفين.</div>'}
       </div>
       <div class="transfer-option-group swap-option-group">
         <div class="transfer-option-heading">
@@ -1407,6 +1425,23 @@ function adoptSelectedModel() {
 function approveDraft() {
   const draft = ensureDraftShape();
   if (!draft?.scenario) return;
+  const gradeViolations = gradeLimitViolations(draft.scenario.assignments);
+  if (gradeViolations.length) {
+    draft.approved = false;
+    draft.notice = 'لا يمكن اعتماد الخطة: يجب ألا يتجاوز أي معلم صفين دراسيين مختلفين.';
+    draft.noticeType = 'warning';
+    persistDraft();
+    render();
+    return;
+  }
+  if (draft.scenario.overloadCount > 0) {
+    draft.approved = false;
+    draft.notice = 'لا يمكن اعتماد الخطة: يوجد معلم أو أكثر يتجاوز سقف النصاب المحدد.';
+    draft.noticeType = 'warning';
+    persistDraft();
+    render();
+    return;
+  }
   if (draft.scenario.unassigned.length) {
     draft.approved = false;
     draft.notice = 'لا يمكن اعتماد الخطة قبل إسناد جميع الشعب.';
@@ -1442,7 +1477,7 @@ function moveDraftTask(taskId, teacherId) {
   }
   const candidate = transferCandidates(assignment).find((item) => item.teacher.id === teacherId);
   if (!candidate) {
-    draft.notice = 'تعذر النقل: المعلم البديل خارج النطاق أو سيجاوز سقف النصاب.';
+    draft.notice = 'تعذر النقل: المعلم البديل خارج النطاق، أو سيجاوز سقف النصاب، أو بلغ حد الصفين.';
     draft.noticeType = 'warning';
     persistDraft();
     render();
@@ -1579,7 +1614,9 @@ async function rebalanceDraft() {
       },
     );
     const complete = result.models.find((model) => (
-      model.unassigned.length === 0 && model.overloadCount === 0
+      model.unassigned.length === 0
+      && model.overloadCount === 0
+      && model.gradeLimitViolationCount === 0
     ));
     if (!complete) {
       draft.notice = 'لم يجد قِسطاس توزيعًا مكتملًا مع التثبيت الحالي. فك تثبيت معلم أو شعبة ثم أعد المحاولة.';
@@ -1632,7 +1669,7 @@ function render() {
       <main>
         <section class="intro">
           <div class="intro-content">
-            <span class="status-pill">الإصدار 1.3.6 · تبديل الشعب بين المعلمين</span>
+            <span class="status-pill">الإصدار 1.3.7 · حد صفّين لكل معلم</span>
             <h1>خطّط الأنصبة بوضوح،<br><em>واعتمد التوزيع بثقة.</em></h1>
             <p>حدّد المادة أو القسم، أدخل بيانات الشعب والمعلمين، ثم راجع توزيعًا متوازنًا واطلب بديلًا عند الحاجة.</p>
             <div class="hero-features"><span>✓ تهيئة حسب المادة</span><span>✓ الصفوف من 1 إلى 12</span><span>✓ بدائل محفوظة عند الطلب</span></div>
@@ -2152,7 +2189,9 @@ async function generate(more = false, allowPartial = false) {
         attempts: result.attempts,
         uniqueFound: state.scenarios.length,
         completeFound: state.scenarios.filter(
-          (scenario) => scenario.unassigned.length === 0 && scenario.overloadCount === 0,
+          (scenario) => scenario.unassigned.length === 0
+          && scenario.overloadCount === 0
+          && scenario.gradeLimitViolationCount === 0,
         ).length,
       };
       state.selectedId = state.scenarios[0]?.id || '';
@@ -2212,7 +2251,9 @@ async function generate(more = false, allowPartial = false) {
     state.selectedId = selectedAlternative?.id || state.scenarios.at(-1)?.id || '';
     state.searchStats.uniqueFound = state.scenarios.length;
     state.searchStats.completeFound = state.scenarios.filter(
-      (scenario) => scenario.unassigned.length === 0 && scenario.overloadCount === 0,
+      (scenario) => scenario.unassigned.length === 0
+          && scenario.overloadCount === 0
+          && scenario.gradeLimitViolationCount === 0,
     ).length;
     state.notice = `تم إنشاء نموذج بديل مختلف وحفظه مع النماذج السابقة.`;
     state.noticeType = 'success';
@@ -2241,5 +2282,43 @@ function repairCurrentTeacherPlaceholders() {
   saveAppData(state.data);
 }
 
+function discardInvalidStoredDraft() {
+  const draft = state.draft;
+  if (!draft?.scenario) return;
+
+  const evaluated = evaluateScenario(
+    state.data.teachers,
+    state.data.requirements,
+    state.data.settings,
+    draft.scenario.assignments || [],
+    draft.scenario.unassigned || [],
+    {
+      id: 'draft-plan',
+      label: draft.approved ? 'الخطة المعتمدة' : 'الخطة قيد التعديل',
+      tag: draft.approved ? 'معتمدة' : 'مسودة',
+      description: draft.scenario.description || 'خطة محفوظة من إصدار سابق.',
+      relocationCount: draft.scenario.relocationCount,
+      repairedCount: draft.scenario.repairedCount,
+    },
+  );
+
+  if (evaluated.gradeLimitViolationCount === 0 && evaluated.overloadCount === 0) {
+    state.draft.scenario = evaluated;
+    persistDraft();
+    return;
+  }
+
+  state.draft = null;
+  state.resultView = 'models';
+  state.step = 2;
+  state.errors = [
+    evaluated.gradeLimitViolationCount > 0
+      ? 'تم إيقاف مسودة محفوظة قديمة لأنها تسند أكثر من صفين دراسيين لمعلم واحد.'
+      : 'تم إيقاف مسودة محفوظة قديمة لأنها تتجاوز سقف النصاب الحالي.',
+  ];
+  clearWorkspace();
+}
+
 repairCurrentTeacherPlaceholders();
+discardInvalidStoredDraft();
 render();

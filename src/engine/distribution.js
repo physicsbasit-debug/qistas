@@ -6,6 +6,10 @@ import {
   POLICY_MODES,
 } from '../domain/assignmentPolicy.js';
 import { compareGrades } from '../domain/grades.js';
+import {
+  canAssignGrade,
+  MAX_GRADES_PER_TEACHER,
+} from '../domain/gradeLimit.js';
 
 const DEFAULT_SETTINGS = Object.freeze({
   teacherMaxLoad: 18,
@@ -197,6 +201,9 @@ function buildWarnings(summaries, unassigned) {
     if (summary.load > summary.maxLoad) {
       warnings.push(`يوجد معلم تجاوز النصاب الأعلى المحدد (${summary.maxLoad}).`);
     }
+    if (summary.gradeCount > MAX_GRADES_PER_TEACHER) {
+      warnings.push('يوجد معلم أُسندت إليه أكثر من صفين دراسيين مختلفين.');
+    }
   }
   return [...new Set(warnings)];
 }
@@ -259,7 +266,11 @@ function greedyAssign(
   const pendingTasks = tasks.filter((task) => !fixedTaskIds.has(task.id));
   for (const task of sortTasksForGreedy(pendingTasks, activeTeachers, variant)) {
     const candidates = activeTeachers
-      .filter((teacher) => !frozenTeacherIds.has(teacher.id) && isEligible(teacher, task))
+      .filter((teacher) => (
+        !frozenTeacherIds.has(teacher.id)
+        && isEligible(teacher, task)
+        && canAssignGrade(assignments, teacher.id, task.grade)
+      ))
       .map((teacher) => {
         const currentLoad = loads.get(teacher.id) ?? 0;
         const maxLoad = teacherMaxLoad(teacher, settings);
@@ -357,6 +368,24 @@ function assignedTasksForTeacher(state, teacherId) {
   return tasks;
 }
 
+function repairGradeAssignments(state) {
+  const assignments = [];
+  for (const [taskId, teacherId] of state.placements) {
+    const task = state.taskById.get(taskId);
+    if (task) assignments.push({ taskId, teacherId, grade: task.grade });
+  }
+  return assignments;
+}
+
+function canPlaceTaskForTeacher(state, task, teacherId, excludingTaskIds = []) {
+  return canAssignGrade(
+    repairGradeAssignments(state),
+    teacherId,
+    task.grade,
+    { excludingTaskIds },
+  );
+}
+
 function repairAssignmentsView(state) {
   const assignments = [];
   for (const [taskId, teacherId] of state.placements) {
@@ -374,6 +403,7 @@ function repairAssignmentsView(state) {
 }
 
 function assignTask(state, task, teacherId) {
+  if (!canPlaceTaskForTeacher(state, task, teacherId, [task.id])) return false;
   const previousTeacherId = state.placements.get(task.id);
   if (previousTeacherId) {
     state.loads.set(
@@ -383,6 +413,7 @@ function assignTask(state, task, teacherId) {
   }
   state.placements.set(task.id, teacherId);
   state.loads.set(teacherId, (state.loads.get(teacherId) ?? 0) + task.periods);
+  return true;
 }
 
 function unassignTask(state, task) {
@@ -399,6 +430,7 @@ function candidateInfos(kind, task, state, excludedTeacherIds = new Set()) {
       !excludedTeacherIds.has(teacher.id)
       && !state.frozenTeacherIds.has(teacher.id)
       && isEligible(teacher, task)
+      && canPlaceTaskForTeacher(state, task, teacher.id)
     ))
     .map((teacher) => {
       const currentLoad = state.loads.get(teacher.id) ?? 0;
@@ -429,6 +461,7 @@ function alternativeTeacherCount(task, state, excludedTeacherId) {
     teacher.id !== excludedTeacherId
     && !state.frozenTeacherIds.has(teacher.id)
     && isEligible(teacher, task)
+    && canPlaceTaskForTeacher(state, task, teacher.id)
   )).length;
 }
 
@@ -489,8 +522,7 @@ function tryPlaceTask(
 ) {
   const candidates = candidateInfos(kind, task, state, excludedTeacherIds);
   const direct = candidates.find((candidate) => candidate.shortage === 0);
-  if (direct) {
-    assignTask(state, task, direct.teacher.id);
+  if (direct && assignTask(state, task, direct.teacher.id)) {
     return true;
   }
 
@@ -518,7 +550,10 @@ function tryPlaceTask(
         continue;
       }
 
-      assignTask(state, task, candidate.teacher.id);
+      if (!assignTask(state, task, candidate.teacher.id)) {
+        restoreRepairState(state, snapshot);
+        continue;
+      }
       let relocated = true;
       const displacedSorted = [...subset.tasks].sort((a, b) => (
         alternativeTeacherCount(a, state, candidate.teacher.id)
@@ -628,6 +663,11 @@ function mutateAssignments(
     loads.set(assignment.teacherId, (loads.get(assignment.teacherId) ?? 0) + assignment.periods);
   }
 
+  const placementGradeAssignments = () => [...placements].flatMap(([taskId, teacherId]) => {
+    const task = taskById.get(taskId);
+    return task ? [{ taskId, teacherId, grade: task.grade }] : [];
+  });
+
   const assignedTaskIds = [...placements.keys()].filter((taskId) => !lockedTaskIds.has(taskId));
   for (let step = 0; step < variant.mutationSteps; step += 1) {
     const firstIndex = Math.floor(
@@ -651,8 +691,21 @@ function mutateAssignments(
           if (!teacherB) return false;
           const loadA = loads.get(teacherAId) ?? 0;
           const loadB = loads.get(teacherBId) ?? 0;
+          const gradeAssignments = placementGradeAssignments();
           return isEligible(teacherA, taskB)
             && isEligible(teacherB, taskA)
+            && canAssignGrade(
+              gradeAssignments,
+              teacherAId,
+              taskB.grade,
+              { excludingTaskIds: [taskA.id] },
+            )
+            && canAssignGrade(
+              gradeAssignments,
+              teacherBId,
+              taskA.grade,
+              { excludingTaskIds: [taskB.id] },
+            )
             && loadA - taskA.periods + taskB.periods <= teacherMaxLoad(teacherA, settings)
             && loadB - taskB.periods + taskA.periods <= teacherMaxLoad(teacherB, settings);
         });
@@ -682,7 +735,8 @@ function mutateAssignments(
         || frozenTeacherIds.has(teacher.id)
         || !isEligible(teacher, taskA)
       ) return false;
-      return (loads.get(teacher.id) ?? 0) + taskA.periods <= teacherMaxLoad(teacher, settings);
+      return canAssignGrade(placementGradeAssignments(), teacher.id, taskA.grade)
+        && (loads.get(teacher.id) ?? 0) + taskA.periods <= teacherMaxLoad(teacher, settings);
     });
     if (!destinationCandidates.length) continue;
     const destination = destinationCandidates[Math.floor(
@@ -745,6 +799,9 @@ function scenarioMetrics(activeTeachers, assignments, unassigned, settings) {
   )));
   const rawLoadVariance = variance(loads);
   const overloadCount = summaries.filter((summary) => summary.load > summary.maxLoad).length;
+  const gradeLimitViolationCount = summaries.filter(
+    (summary) => summary.gradeCount > MAX_GRADES_PER_TEACHER,
+  ).length;
   const flexiblePeriodsCount = summaries.reduce((sum, item) => sum + item.flexiblePeriods, 0);
   const unassignedPeriods = unassigned.reduce((sum, item) => sum + item.periods, 0);
   const compactness = summaries.reduce(
@@ -757,6 +814,7 @@ function scenarioMetrics(activeTeachers, assignments, unassigned, settings) {
   const rankScore = unassignedPeriods * 100_000
     + unassigned.length * 30_000
     + overloadCount * 20_000
+    + gradeLimitViolationCount * 1_000_000
     + utilizationVariance * 4_000
     + loadSpread * 120
     + flexiblePeriodsCount * 1.5
@@ -767,6 +825,7 @@ function scenarioMetrics(activeTeachers, assignments, unassigned, settings) {
     variance: rawLoadVariance,
     utilizationVariance,
     overloadCount,
+    gradeLimitViolationCount,
     flexiblePeriodsCount,
     compactness,
     highestLoad,
@@ -807,6 +866,10 @@ function prepareFixedAssignments(activeTeachers, tasks, settings, fixedAssignmen
       : regularStatus;
     if (fixedStatus === ASSIGNMENT_STATUS.FORBIDDEN) {
       errors.push(`${teacher.name}: التكليف المثبت ${task.grade} / ${task.section} خارج نطاقه.`);
+      continue;
+    }
+    if (!canAssignGrade(assignments, teacher.id, task.grade)) {
+      errors.push(`${teacher.name}: لا يمكن تثبيت أكثر من صفين دراسيين مختلفين للمعلم الواحد.`);
       continue;
     }
     const nextLoad = (loads.get(teacher.id) ?? 0) + task.periods;
@@ -1015,7 +1078,11 @@ function displayTag(model, winners) {
 
 export function rankDistributionModels(candidates, limit = 20) {
   const unique = deduplicateModels(candidates);
-  const complete = unique.filter((model) => model.unassigned.length === 0 && model.overloadCount === 0);
+  const complete = unique.filter((model) => (
+    model.unassigned.length === 0
+    && model.overloadCount === 0
+    && model.gradeLimitViolationCount === 0
+  ));
   const source = complete.length ? complete : unique;
   if (!source.length) return [];
 
@@ -1113,7 +1180,11 @@ export function generateDistributionModels(
     attempts,
     uniqueFound: uniqueCandidates.length,
     completeFound: uniqueCandidates.filter(
-      (model) => model.unassigned.length === 0 && model.overloadCount === 0,
+      (model) => (
+        model.unassigned.length === 0
+        && model.overloadCount === 0
+        && model.gradeLimitViolationCount === 0
+      ),
     ).length,
   };
 }
